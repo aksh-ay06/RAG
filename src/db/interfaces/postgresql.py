@@ -45,7 +45,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 max_overflow=self.config.max_overflow,
                 pool_pre_ping=True,
             )
-            self.sesion_factory = sessionmaker(bind=self.engine,expire_on_commit=False)
+            self.session_factory = sessionmaker(bind=self.engine,expire_on_commit=False)
 
             assert self.engine is not None
             with self.engine.connect() as conn:
@@ -83,9 +83,9 @@ class PostgreSQLDatabase(BaseDatabase):
 
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:
-        if not self.sesion_factory:
+        if not self.session_factory:
             raise RuntimeError("Session factory is not initialized. Call startup() first.")
-        session = self.sesion_factory()
+        session = self.session_factory()
         try:
             yield session
             session.commit()
