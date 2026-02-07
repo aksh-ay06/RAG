@@ -9,11 +9,11 @@ from sqlalchemy import create_engine,inspect,text
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
-from src.db.interfaces.base import BaseDataBase
+from src.db.interfaces.base import BaseDatabase
 
 logger = logging.getLogger(__name__)
 
-class PostgreSQLsettings(BaseSettings):
+class PostgreSQLSettings(BaseSettings):
     # database_url: str = Field(..., env="DATABASE_URL", description="Database connection URL")
     database_url: str = Field(default="postgresql://rag_user:rag_password@localhost:5432/rag_db", description="PostgreSQL database URL")
     echo_sql: bool = Field(False, description="Enable SQLAlchemy echo for debugging")
@@ -28,8 +28,8 @@ class PostgreSQLsettings(BaseSettings):
 
 Base = declarative_base()
 
-class PostgreSQLDatabase(BaseDataBase):
-    def __init__(self, config: PostgreSQLsettings):
+class PostgreSQLDatabase(BaseDatabase):
+    def __init__(self, config: PostgreSQLSettings):
         self.config = config
         self.engine: Optional[Engine] = None
         self.session_factory: Optional[sessionmaker] = None

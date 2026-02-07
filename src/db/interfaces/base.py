@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from src import db
 
-class BaseDataBase(ABC):
+class BaseDatabase(ABC):
     @abstractmethod
     def startup(self) -> None:
         pass
