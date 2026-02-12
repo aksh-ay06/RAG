@@ -1,16 +1,16 @@
-.PHONY: help start stop restart status logs health setup format lint test test-cov clean
+.PHONY: help start stop restart status logs health setup format lint test test-cov clean clean-images clean-all prune
 
-# Default target
 help: ## Show this help message
 	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 # Service management
 start: ## Start all services
 	docker compose up --build -d
 
-stop: ## Stop all services
-	docker compose down
+stop: ## Stop and remove services
+	docker compose down --remove-orphans
 
 restart: ## Restart all services
 	docker compose restart
@@ -23,7 +23,6 @@ logs: ## Show service logs
 
 # Health checks
 health: ## Check all services health
-	@echo "Checking service health..."
 	@curl -s http://localhost:8000/health | jq . || echo "API not responding"
 	@curl -s http://localhost:9200/_cluster/health | jq . || echo "OpenSearch not responding"
 	@curl -s http://localhost:8080/api/v2/monitor/health || echo "Airflow not responding"
@@ -47,6 +46,14 @@ test-cov: ## Run tests with coverage
 	uv run pytest --cov=src --cov-report=html
 
 # Cleanup
-clean: ## Clean up everything
-	docker compose down -v
-	docker system prune -f
+clean: ## Stop services and remove volumes
+	docker compose down --volumes --remove-orphans
+
+clean-images: ## Remove project-built images
+	docker compose down --rmi local
+
+clean-all: ## Full project cleanup
+	docker compose down --rmi local --volumes --remove-orphans
+
+prune: ## ⚠️ Global Docker cleanup (use carefully)
+	docker system prune -af --volumes
