@@ -8,37 +8,38 @@ from src import db
 class BaseDatabase(ABC):
     @abstractmethod
     def startup(self) -> None:
-        pass
+        """Initialize the database connection."""
 
     @abstractmethod
     def teardown(self) -> None:
-        pass
+        """Close the database connection."""
 
     @abstractmethod
     def get_session(self) -> ContextManager[Session]:
-        pass
+        """Get a new database session."""
 
 
 class BaseRepository(ABC):
+
     def __init__(self, session: Session):
         self.session = session
 
     @abstractmethod
     def create(self, data: Dict[str, Any]) -> Any:
-        pass
+        """Create a new record in the database."""
 
     @abstractmethod
     def get_by_id(self, id: Any) -> Optional[Any]:
-        pass
+        """Retrieve a record by its ID."""
 
     @abstractmethod
     def update(self, record_id: Any, data: Dict[str, Any]) -> Optional[Any]:
-        pass
+        """Update an existing record in the database."""
 
     @abstractmethod
     def delete(self, record_id: Any) -> bool:
-        pass
+        """Delete a record from the database."""
 
     @abstractmethod
     def list(self, limit: int = 100, offset: int = 0) -> List[Any]:
-        pass
+        """List records in the database with pagination."""
