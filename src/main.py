@@ -6,8 +6,9 @@ import uvicorn
 from fastapi import FastAPI
 from src.config import get_settings
 from src.db.factory import make_database
-from src.routers import papers, ping
+from src.routers import papers, ping, search
 from src.services.arxiv.factory import make_arxiv_client
+from src.services.opensearch.factory import make_opensearch_client
 from src.services.pdf_parser.factory import make_pdf_parser_service
 
 # Setup logging
@@ -32,7 +33,24 @@ async def lifespan(app: FastAPI):
     app.state.database = database
     logger.info("Database connected")
 
-    # Initialize services (kept for future endpoints and notebook demos)
+    opensearch_client = make_opensearch_client()
+    app.state.opensearch_client = opensearch_client
+    logger.info("OpenSearch client initialized")
+
+    if opensearch_client.health_check():
+        logger.info("OpenSearch cluster is healthy")
+
+        if opensearch_client.create_index():
+            logger.info("OpenSearch index created successfully")
+        else:
+            logger.warning("OpenSearch index already exists or failed to create")
+
+        stats = opensearch_client.get_index_stats()
+        logger.info(f"Opensearch ready : {stats.get('document_count', 0)} documents indexed")
+    else:
+        logger.error("OpenSearch cluster is not healthy. Check connection and configuration.")
+        
+        
     app.state.arxiv_client = make_arxiv_client()
     app.state.pdf_parser = make_pdf_parser_service()
     logger.info("Services initialized: arXiv API client, PDF parser")
@@ -55,6 +73,7 @@ app = FastAPI(
 # Include routers
 app.include_router(ping.router, prefix="/api/v1")
 app.include_router(papers.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":
