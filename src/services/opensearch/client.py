@@ -1,35 +1,15 @@
 import logging
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
 
 from opensearchpy import OpenSearch
-from opensearchpy.exceptions import NotFoundError, RequestError, OpenSearchException
+from opensearchpy.exceptions import NotFoundError, RequestError
 from src.config import Settings, get_settings
 
 from .index_config import ARXIV_PAPERS_INDEX, ARXIV_PAPERS_MAPPING
 from .query_builder import PaperQueryBuilder
 
 logger = logging.getLogger(__name__)
-
-
-# Type definitions for better type safety
-class IndexStats(TypedDict):
-    index_name: str
-    document_count: int
-    size_in_bytes: int
-    health: str
-
-
-class SearchResult(TypedDict):
-    total: int
-    hits: List[Dict[str, Any]]
-    error: Optional[str]
-
-
-class BulkIndexResult(TypedDict):
-    success: int
-    failed: int
 
 
 class OpenSearchClient:
@@ -40,30 +20,18 @@ class OpenSearchClient:
     searching with BM25 scoring, and managing OpenSearch cluster operations.
     """
 
-    # Default fields for searching
-    DEFAULT_SEARCH_FIELDS = ["title", "abstract", "authors"]
-
-    def __init__(
-        self,
-        host: str = "http://localhost:9200",
-        settings: Optional[Settings] = None,
-    ):
+    def __init__(self, host: str = "http://localhost:9200", settings: Optional[Settings] = None):
         """Initialize OpenSearch client.
 
-        Args:
-            host: OpenSearch cluster endpoint URL
-            settings: Application settings instance (uses default if None)
+        :param host: OpenSearch cluster endpoint URL
+        :param settings: Application settings instance (uses default if None)
+        :type host: str
+        :type settings: Optional[Settings]
         """
         self.host = host
         self.settings = settings or get_settings()
-        self.index_name = self.settings.opensearch.index_name or ARXIV_PAPERS_INDEX
-
-        self.client = self._create_client(host)
-        logger.info("OpenSearch client initialized with host: %s, index: %s", host, self.index_name)
-
-    def _create_client(self, host: str) -> OpenSearch:
-        """Create OpenSearch client with proper configuration."""
-        return OpenSearch(
+        self.index_name = self.settings.opensearch.index_name
+        self.client = OpenSearch(
             hosts=[host],
             http_compress=True,
             use_ssl=False,
@@ -71,121 +39,97 @@ class OpenSearchClient:
             ssl_assert_hostname=False,
             ssl_show_warn=False,
         )
+        # Use configured index name, fall back to constant if not set
+        self.index_name = self.settings.opensearch.index_name or ARXIV_PAPERS_INDEX
+        logger.info(f"OpenSearch client initialized with host: {host}")
 
     def create_index(self, force: bool = False) -> bool:
         """Create the arxiv-papers index with proper mappings.
 
-        Args:
-            force: If True, delete existing index before creating
-
-        Returns:
-            True if index was created, False if it already exists
-
-        Raises:
-            OpenSearchException: If index creation fails
+        :param force: If True, delete existing index before creating
+        :type force: bool
+        :returns: True if index was created, False if it already exists
+        :rtype: bool
         """
         try:
-            if self._index_exists():
+            # Check if index exists
+            if self.client.indices.exists(index=self.index_name):
                 if force:
-                    self._delete_index()
+                    logger.info(f"Deleting existing index: {self.index_name}")
+                    self.client.indices.delete(index=self.index_name)
                 else:
-                    logger.info("Index %s already exists", self.index_name)
+                    logger.info(f"Index {self.index_name} already exists")
                     return False
 
-            return self._create_index()
+            # Create index with mappings
+            response = self.client.indices.create(index=self.index_name, body=ARXIV_PAPERS_MAPPING)
+
+            if response.get("acknowledged"):
+                logger.info(f"Successfully created index: {self.index_name}")
+                return True
+            else:
+                logger.error(f"Failed to create index: {response}")
+                return False
 
         except RequestError as e:
-            logger.error("Error creating index: %s", e)
-            raise
-        except OpenSearchException as e:
-            logger.error("Unexpected error creating index: %s", e)
-            raise
-
-    def _index_exists(self) -> bool:
-        """Check if index exists."""
-        return self.client.indices.exists(index=self.index_name)
-
-    def _delete_index(self) -> None:
-        """Delete existing index."""
-        logger.info("Deleting existing index: %s", self.index_name)
-        self.client.indices.delete(index=self.index_name)
-
-    def _create_index(self) -> bool:
-        """Create index with mappings."""
-        response = self.client.indices.create(
-            index=self.index_name,
-            body=ARXIV_PAPERS_MAPPING
-        )
-
-        if response.get("acknowledged"):
-            logger.info("Successfully created index: %s", self.index_name)
-            return True
-
-        logger.error("Failed to create index: %s", response)
-        return False
+            logger.error(f"Error creating index: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error creating index: {e}")
+            return False
 
     def index_paper(self, paper_data: Dict[str, Any]) -> bool:
         """Index a single paper document.
 
-        Args:
-            paper_data: Paper data to index
-
-        Returns:
-            True if successful, False otherwise
+        :param paper_data: Paper data to index
+        :type paper_data: Dict[str, Any]
+        :returns: True if successful, False otherwise
+        :rtype: bool
         """
         try:
-            validated_data = self._prepare_paper_data(paper_data)
-            if not validated_data:
+            # Ensure required fields
+            if "arxiv_id" not in paper_data:
+                logger.error("Missing arxiv_id in paper data")
                 return False
 
+            # Add timestamps if not present
+            if "created_at" not in paper_data:
+                paper_data["created_at"] = datetime.now(timezone.utc).isoformat()
+            if "updated_at" not in paper_data:
+                paper_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # Convert authors list to string if needed
+            if isinstance(paper_data.get("authors"), list):
+                paper_data["authors"] = ", ".join(paper_data["authors"])
+
+            # Index the document
             response = self.client.index(
                 index=self.index_name,
-                id=validated_data["arxiv_id"],
-                body=validated_data,
-                refresh=True,
+                id=paper_data["arxiv_id"],
+                body=paper_data,
+                refresh=True,  # Make it immediately searchable
             )
 
-            success = response.get("result") in ["created", "updated"]
-            if success:
-                logger.debug("Indexed paper: %s", validated_data["arxiv_id"])
+            if response.get("result") in ["created", "updated"]:
+                logger.debug(f"Indexed paper: {paper_data['arxiv_id']}")
+                return True
             else:
-                logger.error("Failed to index paper: %s", response)
+                logger.error(f"Failed to index paper: {response}")
+                return False
 
-            return success
-
-        except OpenSearchException as e:
-            logger.error("Error indexing paper %s: %s", paper_data.get("arxiv_id", "unknown"), e)
+        except Exception as e:
+            logger.error(f"Error indexing paper {paper_data.get('arxiv_id', 'unknown')}: {e}")
             return False
 
-    def _prepare_paper_data(self, paper_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Prepare and validate paper data for indexing."""
-        if "arxiv_id" not in paper_data:
-            logger.error("Missing arxiv_id in paper data")
-            return None
-
-        # Create a copy to avoid modifying original
-        prepared_data = paper_data.copy()
-        now = datetime.now(timezone.utc).isoformat()
-
-        prepared_data.setdefault("created_at", now)
-        prepared_data.setdefault("updated_at", now)
-
-        # Normalize authors field
-        if isinstance(prepared_data.get("authors"), list):
-            prepared_data["authors"] = ", ".join(prepared_data["authors"])
-
-        return prepared_data
-
-    def bulk_index_papers(self, papers: List[Dict[str, Any]]) -> BulkIndexResult:
+    def bulk_index_papers(self, papers: List[Dict[str, Any]]) -> Dict[str, int]:
         """Bulk index multiple papers.
 
-        Args:
-            papers: List of paper data to index
-
-        Returns:
-            Dictionary with counts of successful and failed indexing
+        :param papers: List of paper data to index
+        :type papers: List[Dict[str, Any]]
+        :returns: Dictionary with counts of successful and failed indexing
+        :rtype: Dict[str, int]
         """
-        results: BulkIndexResult = {"success": 0, "failed": 0}
+        results = {"success": 0, "failed": 0}
 
         for paper in papers:
             if self.index_paper(paper):
@@ -193,11 +137,7 @@ class OpenSearchClient:
             else:
                 results["failed"] += 1
 
-        logger.info(
-            "Bulk indexing complete: %d successful, %d failed",
-            results["success"],
-            results["failed"]
-        )
+        logger.info(f"Bulk indexing complete: {results['success']} successful, {results['failed']} failed")
         return results
 
     def search_papers(
@@ -209,22 +149,28 @@ class OpenSearchClient:
         categories: Optional[List[str]] = None,
         track_total_hits: bool = True,
         latest_papers: bool = False,
-    ) -> SearchResult:
+    ) -> Dict[str, Any]:
         """Search papers using BM25 scoring with query builder.
 
-        Args:
-            query: Search query text
-            size: Number of results to return
-            from_: Offset for pagination
-            fields: List of fields to search in (default: title, abstract, authors)
-            categories: Filter by categories
-            track_total_hits: Whether to track total hits accurately
-            latest_papers: Sort by publication date instead of relevance
-
-        Returns:
-            Search results with hits and metadata
+        :param query: Search query text
+        :param size: Number of results to return
+        :param from_: Offset for pagination
+        :param fields: List of fields to search in (default: title, abstract, authors)
+        :param categories: Filter by categories
+        :param track_total_hits: Whether to track total hits accurately
+        :param latest_papers: Sort by publication date instead of relevance
+        :type query: str
+        :type size: int
+        :type from_: int
+        :type fields: Optional[List[str]]
+        :type categories: Optional[List[str]]
+        :type track_total_hits: bool
+        :type latest_papers: bool
+        :returns: Search results with hits and metadata
+        :rtype: Dict[str, Any]
         """
         try:
+            # Build query using query builder
             query_builder = PaperQueryBuilder(
                 query=query,
                 size=size,
@@ -236,127 +182,117 @@ class OpenSearchClient:
             )
 
             search_body = query_builder.build()
+
+            # Execute search
             response = self.client.search(index=self.index_name, body=search_body)
 
-            results = self._format_search_results(response, query)
+            # Format results
+            results = {"total": response["hits"]["total"]["value"], "hits": []}
+
+            for hit in response["hits"]["hits"]:
+                paper = hit["_source"]
+                paper["score"] = hit["_score"]
+                if "highlight" in hit:
+                    paper["highlights"] = hit["highlight"]
+                results["hits"].append(paper)
+
+            logger.info(f"Search for '{query}' returned {results['total']} results")
             return results
 
         except NotFoundError:
-            logger.error("Index %s not found", self.index_name)
+            logger.error(f"Index {self.index_name} not found")
             return {"total": 0, "hits": [], "error": "Index not found"}
-        except OpenSearchException as e:
-            logger.error("Search error: %s", e)
+        except Exception as e:
+            logger.error(f"Search error: {e}")
             return {"total": 0, "hits": [], "error": str(e)}
 
-    def _format_search_results(self, response: Dict[str, Any], query: str) -> SearchResult:
-        """Format raw search response into SearchResult."""
-        total = response["hits"]["total"]["value"]
-        hits = []
-
-        for hit in response["hits"]["hits"]:
-            paper = hit["_source"]
-            paper["score"] = hit["_score"]
-
-            if "highlight" in hit:
-                paper["highlights"] = hit["highlight"]
-
-            hits.append(paper)
-
-        logger.info("Search for '%s' returned %d results", query, total)
-        return {"total": total, "hits": hits, "error": None}
-
-    def get_index_stats(self) -> IndexStats:
+    def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics about the index.
 
-        Returns:
-            Dictionary with index statistics
+        :returns: Dictionary with index statistics
+        :rtype: Dict[str, Any]
         """
         try:
             stats = self.client.indices.stats(index=self.index_name)
             count = self.client.count(index=self.index_name)
-            health = self.client.cluster.health(index=self.index_name)
 
             return {
                 "index_name": self.index_name,
                 "document_count": count["count"],
                 "size_in_bytes": stats["indices"][self.index_name]["total"]["store"]["size_in_bytes"],
-                "health": health["status"],
+                "health": self.client.cluster.health(index=self.index_name)["status"],
             }
-        except OpenSearchException as e:
-            logger.error("Error getting index stats: %s", e)
-            raise
+        except Exception as e:
+            logger.error(f"Error getting index stats: {e}")
+            return {"error": str(e)}
 
     def health_check(self) -> bool:
         """Check if OpenSearch is healthy and accessible.
 
-        Returns:
-            True if healthy, False otherwise
+        :returns: True if healthy, False otherwise
+        :rtype: bool
         """
         try:
             health = self.client.cluster.health()
             return health["status"] in ["green", "yellow"]
-        except OpenSearchException as e:
-            logger.error("Health check failed: %s", e)
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
             return False
 
-    def get_cluster_info(self) -> Dict[str, Any]:
+    def get_cluster_info(self) -> Optional[Dict[str, Any]]:
         """Get OpenSearch cluster information.
 
-        Returns:
-            Dictionary with cluster info
-
-        Raises:
-            OpenSearchException: If unable to retrieve cluster info
+        :returns: Dictionary with cluster info or None if error
+        :rtype: Optional[Dict[str, Any]]
         """
         try:
-            return self.client.info()
-        except OpenSearchException as e:
-            logger.error("Error getting cluster info: %s", e)
-            raise
+            info = self.client.info()
+            return info
+        except Exception as e:
+            logger.error(f"Error getting cluster info: {e}")
+            return None
 
-    def get_cluster_health(self) -> Dict[str, Any]:
+    def get_cluster_health(self) -> Optional[Dict[str, Any]]:
         """Get detailed cluster health information.
 
-        Returns:
-            Dictionary with cluster health details
-
-        Raises:
-            OpenSearchException: If unable to retrieve cluster health
+        :returns: Dictionary with cluster health details or None if error
+        :rtype: Optional[Dict[str, Any]]
         """
         try:
-            return self.client.cluster.health()
-        except OpenSearchException as e:
-            logger.error("Error getting cluster health: %s", e)
-            raise
+            health = self.client.cluster.health()
+            return health
+        except Exception as e:
+            logger.error(f"Error getting cluster health: {e}")
+            return None
 
-    def get_index_mapping(self) -> Dict[str, Any]:
-        """Get index mapping.
+    def get_index_mapping(self) -> Optional[Dict[str, Any]]:
+        """Get index mapping (alias for get_mappings for compatibility).
 
-        Returns:
-            Dictionary with index mapping
-
-        Raises:
-            OpenSearchException: If unable to retrieve mapping
+        :returns: Dictionary with index mapping or None if error
+        :rtype: Optional[Dict[str, Any]]
         """
         try:
             mappings = self.client.indices.get_mapping(index=self.index_name)
-            return mappings.get(self.index_name, {}).get("mappings", {})
-        except OpenSearchException as e:
-            logger.error("Error getting index mapping: %s", e)
-            raise
+            # Extract just the properties from the nested structure
+            if mappings and self.index_name in mappings:
+                return mappings[self.index_name].get("mappings", {})
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting index mapping: {e}")
+            return None
 
-    def get_index_settings(self) -> Dict[str, Any]:
-        """Get index settings.
+    def get_index_settings(self) -> Optional[Dict[str, Any]]:
+        """Get index settings (alias for get_settings for compatibility).
 
-        Returns:
-            Dictionary with index settings
-
-        Raises:
-            OpenSearchException: If unable to retrieve settings
+        :returns: Dictionary with index settings or None if error
+        :rtype: Optional[Dict[str, Any]]
         """
         try:
             settings = self.client.indices.get_settings(index=self.index_name)
-            return settings.get(self.index_name, {}).get("settings", {})
-        except OpenSearchException as e:
-            logger.error("Error getting index settings: %s", e)
-            raise
+            # Extract just the settings for this index
+            if settings and self.index_name in settings:
+                return settings[self.index_name].get("settings", {})
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting index settings: {e}")
+            return None

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class DoclingParser:
     """Docling PDF parser for fallback when GROBID fails."""
 
-    def __init__(self, max_pages: int = 20, max_file_size_mb: int = 20, do_ocr: bool = False, do_table_structure: bool = True):
+    def __init__(self, max_pages: int, max_file_size_mb: int, do_ocr: bool = False, do_table_structure: bool = True):
         """
         Initialize DocumentConverter with optimized pipeline options.
 

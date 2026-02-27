@@ -3,7 +3,7 @@ from typing import Annotated, Generator
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
-from services.opensearch.client import OpenSearchClient
+from src.services.opensearch.client import OpenSearchClient
 from src.config import Settings
 from src.db.interfaces.base import BaseDatabase
 
@@ -46,6 +46,6 @@ def get_pdf_parser(request: Request):
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[BaseDatabase, Depends(get_database)]
 SessionDep = Annotated[Session, Depends(get_db_session)]
-OpenSearchClientDep = Annotated[OpenSearchClient, Depends(get_opensearch_client)]
-ArxivClientDep = Annotated[dict, Depends(get_arxiv_client)]
+OpenSearchDep = Annotated[OpenSearchClient, Depends(get_opensearch_client)]
+ArxivDep = Annotated[dict, Depends(get_arxiv_client)]
 PdfParserDep = Annotated[dict, Depends(get_pdf_parser)]

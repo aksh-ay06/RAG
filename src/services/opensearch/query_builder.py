@@ -32,9 +32,10 @@ class PaperQueryBuilder:
             "highlight": self._build_highlight(),
         }
 
-       sort = self._build_sort()
-       if sort:
-           query_body["sort"] = sort
+        sort = self._build_sort()
+    
+        if sort:
+            query_body["sort"] = sort
 
         return query_body
 
@@ -96,16 +97,11 @@ class PaperQueryBuilder:
 
         return {
             "fields": {
-                "title"; {
+                "title": {
                     "fragment_size": 0,
                     "number_of_fragments": 0,
                 },
-                "abstract": {
-                    "fragment_size": 150,
-                    "number_of_fragments": 3,
-                    "pre_tags": ["<mark>"],
-                    "post_tags": ["</mark>"],
-                },
+                "abstract": {"fragment_size": 150,"number_of_fragments": 3,"pre_tags": ["<mark>"],"post_tags": ["</mark>"]},
                 "authors": {
                     "fragment_size": 0,
                     "number_of_fragments": 0,

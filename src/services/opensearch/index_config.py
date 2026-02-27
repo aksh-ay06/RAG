@@ -13,7 +13,8 @@ ARXIV_PAPERS_MAPPING = {
                 "text_analyzer": {
                     "type": "custom",
                     "tokenizer": "standard",
-                    "filter": ["lowercase", "stop", "snowball"]},
+                    "filter": ["lowercase", "stop", "snowball"],
+                },
             }
         },
     },
@@ -21,8 +22,16 @@ ARXIV_PAPERS_MAPPING = {
         "dynamic": "strict",
         "properties": {
             "arxiv_id": {"type": "keyword"},
-            "title": {"type": "text", "analyzer": "text_analyzer", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}}},
-            "authors": {"type": "text", "analyzer": "text_analyzer", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "title": {
+                "type": "text",
+                "analyzer": "text_analyzer",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+            },
+            "authors": {
+                "type": "text",
+                "analyzer": "text_analyzer",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+            },
             "abstract": {"type": "text", "analyzer": "text_analyzer"},
             "categories": {"type": "keyword"},
             "raw_text": {"type": "text", "analyzer": "text_analyzer"},
@@ -30,6 +39,7 @@ ARXIV_PAPERS_MAPPING = {
             "published_date": {"type": "date"},
             "created_at": {"type": "date"},
             "updated_at": {"type": "date"},
-        }
-    }
+        },
+    },
 }
+
