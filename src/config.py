@@ -70,6 +70,19 @@ class PDFParserSettings(DefaultSettings):
     do_ocr: bool = False
     do_table_structure: bool = True
 
+class ChunkingSettings(BaseConfigSettings):
+    model_config = SettingsConfigDict(
+        env_file=[".env", str(ENV_FILE_PATH)],
+        env_prefix="CHUNKING__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    chunk_size: int = 600  # Target words per chunk
+    overlap_size: int = 100  # Words to overlap between chunks
+    min_chunk_size: int = 100  # Minimum words for a valid chunk
+    section_based: bool = True  # Use section-based chunking when available
 
 class OpenSearchSettings(DefaultSettings):
     """OpenSearch client settings."""
@@ -103,8 +116,11 @@ class Settings(DefaultSettings):
     ollama_model: str = "llama3.2:1b"
     ollama_timeout: int = 300
 
+    jina_api_key: str = ""
+
     arxiv: ArxivSettings = Field(default_factory=ArxivSettings)
     pdf_parser: PDFParserSettings = Field(default_factory=PDFParserSettings)
+    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
 
     @field_validator("postgres_database_url")
