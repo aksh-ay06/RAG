@@ -1,5 +1,5 @@
 import json
-import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -111,16 +111,16 @@ class ResponseParser:
         Returns:
             Dictionary with extracted content or fallback
         """
-        # Try to find JSON in the response
-        json_match = re.search(r"\{.*\}", response, re.DOTALL)
-        if json_match:
+        # Scan for the first valid JSON object in the response
+        decoder = json.JSONDecoder()
+        start = response.find("{")
+        while start != -1:
             try:
-                parsed = json.loads(json_match.group())
-                # Validate with Pydantic, using defaults for missing fields
+                parsed, _ = decoder.raw_decode(response, start)
                 validated = RAGResponse(**parsed)
                 return validated.model_dump()
             except (json.JSONDecodeError, ValidationError):
-                pass
+                start = response.find("{", start + 1)
 
         # Final fallback: return response as plain text
         return {
@@ -129,3 +129,9 @@ class ResponseParser:
             "confidence": "low",
             "citations": [],
         }
+
+
+@lru_cache(maxsize=1)
+def get_prompt_builder() -> RAGPromptBuilder:
+    """Return a cached singleton RAGPromptBuilder, avoiding repeated disk I/O."""
+    return RAGPromptBuilder()

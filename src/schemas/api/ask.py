@@ -32,6 +32,7 @@ class AskResponse(BaseModel):
     sources: List[str] = Field(..., description="PDF URLs of source papers")
     chunks_used: int = Field(..., description="Number of chunks used for generation")
     search_mode: str = Field(..., description="Search mode used: bm25 or hybrid")
+    cached: bool = Field(False, description="Whether the response was served from cache")
 
     class Config:
         json_schema_extra = {

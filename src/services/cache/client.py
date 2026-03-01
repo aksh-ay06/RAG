@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-import redis
+import redis.asyncio as aioredis
 from src.config import RedisSettings
 from src.schemas.api.ask import AskRequest, AskResponse
 
@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 class CacheClient:
     """Redis-based exact match cache for RAG queries."""
 
-    def __init__(self, redis_client: redis.Redis, settings: RedisSettings):
+    def __init__(self, redis_client: aioredis.Redis, settings: RedisSettings):
         self.redis = redis_client
         self.settings = settings
-        self.ttl = timedelta(hours=settings.ttl_hours)
+        self.ttl = int(timedelta(hours=settings.ttl_hours).total_seconds())
 
     def _generate_cache_key(self, request: AskRequest) -> str:
         """Generate exact cache key based on request parameters."""
@@ -38,7 +38,7 @@ class CacheClient:
             cache_key = self._generate_cache_key(request)
 
             # Simple Redis GET operation - O(1)
-            cached_response = self.redis.get(cache_key)
+            cached_response = await self.redis.get(cache_key)
 
             if cached_response:
                 try:
@@ -61,7 +61,7 @@ class CacheClient:
             cache_key = self._generate_cache_key(request)
 
             # Simple Redis SET operation with TTL
-            success = self.redis.set(cache_key, response.model_dump_json(), ex=self.ttl)
+            success = await self.redis.set(cache_key, response.model_dump_json(), ex=self.ttl)
 
             if success:
                 logger.info(f"Stored response in exact cache with key {cache_key[:16]}...")

@@ -1,18 +1,19 @@
 import logging
 
 import redis
+import redis.asyncio as aioredis
 from src.config import Settings
 from src.services.cache.client import CacheClient
 
 logger = logging.getLogger(__name__)
 
 
-def make_redis_client(settings: Settings) -> redis.Redis:
-    """Create Redis client with connection pooling."""
+async def make_redis_client(settings: Settings) -> aioredis.Redis:
+    """Create async Redis client with connection pooling."""
     redis_settings = settings.redis
 
     try:
-        client = redis.Redis(
+        client = aioredis.Redis(
             host=redis_settings.host,
             port=redis_settings.port,
             password=redis_settings.password if redis_settings.password else None,
@@ -25,7 +26,7 @@ def make_redis_client(settings: Settings) -> redis.Redis:
         )
 
         # Test connection
-        client.ping()
+        await client.ping()
         logger.info(f"Connected to Redis at {redis_settings.host}:{redis_settings.port}")
         return client
 
@@ -37,10 +38,10 @@ def make_redis_client(settings: Settings) -> redis.Redis:
         raise
 
 
-def make_cache_client(settings: Settings) -> CacheClient:
+async def make_cache_client(settings: Settings) -> CacheClient:
     """Create exact match cache client."""
     try:
-        redis_client = make_redis_client(settings)
+        redis_client = await make_redis_client(settings)
         cache_client = CacheClient(redis_client, settings.redis)
         logger.info("Exact match cache client created successfully")
         return cache_client

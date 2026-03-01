@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from opensearchpy import OpenSearch
+from opensearchpy.exceptions import NotFoundError
 from src.config import Settings
 
 from .index_config_hybrid import ARXIV_PAPERS_CHUNKS_MAPPING, HYBRID_RRF_PIPELINE
@@ -103,14 +104,14 @@ class OpenSearchClient:
                     self.client.ingest.get_pipeline(id=pipeline_id)
                     self.client.ingest.delete_pipeline(id=pipeline_id)
                     logger.info(f"Deleted existing RRF pipeline: {pipeline_id}")
-                except Exception:
+                except NotFoundError:
                     pass
 
             try:
                 self.client.ingest.get_pipeline(id=pipeline_id)
                 logger.info(f"RRF pipeline already exists: {pipeline_id}")
                 return False
-            except Exception:
+            except NotFoundError:
                 pass
             pipeline_body = {
                 "description": HYBRID_RRF_PIPELINE["description"],
