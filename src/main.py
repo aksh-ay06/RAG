@@ -76,6 +76,7 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     database.teardown()
+    app.state.langfuse_tracer.shutdown()
     logger.info("API shutdown complete")
 
 

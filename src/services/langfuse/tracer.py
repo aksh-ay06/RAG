@@ -19,11 +19,7 @@ class RAGTracer:
         with self.tracer.trace_rag_request(
             query=query, user_id=user_id, session_id=f"session_{user_id}", metadata={"simplified_tracing": True}
         ) as trace:
-            try:
-                yield trace
-            finally:
-                if trace:
-                    self.tracer.flush()
+            yield trace
 
     @contextmanager
     def trace_embedding(self, trace, query: str):
