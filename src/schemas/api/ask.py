@@ -11,6 +11,7 @@ class AskRequest(BaseModel):
     use_hybrid: bool = Field(True, description="Use hybrid search (BM25 + vector)")
     model: str = Field("llama3.2:1b", description="Ollama model to use for generation")
     categories: Optional[List[str]] = Field(None, description="Filter by arXiv categories")
+    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue. Omit for single-turn.")
 
     class Config:
         json_schema_extra = {
@@ -33,6 +34,7 @@ class AskResponse(BaseModel):
     chunks_used: int = Field(..., description="Number of chunks used for generation")
     search_mode: str = Field(..., description="Search mode used: bm25 or hybrid")
     cached: bool = Field(False, description="Whether the response was served from cache")
+    session_id: Optional[str] = Field(None, description="Session ID to pass in subsequent requests.")
 
     class Config:
         json_schema_extra = {

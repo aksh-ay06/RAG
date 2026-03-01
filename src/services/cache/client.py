@@ -75,3 +75,33 @@ class CacheClient:
         except Exception as e:
             logger.error(f"Error storing in cache: {e}")
             return False
+
+    async def get_session_history(self, session_id: str) -> list[dict]:
+        """Return up to last 10 messages (5 turns) for the session."""
+        key = f"session:{session_id}:history"
+        try:
+            raw = await self.redis.get(key)
+            if not raw:
+                return []
+            history = json.loads(raw)
+            return history[-10:]  # last 5 turns = 10 messages
+        except json.JSONDecodeError:
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching session history: {e}")
+            return []
+
+    async def append_to_session_history(
+        self, session_id: str, user_msg: str, assistant_msg: str
+    ) -> None:
+        """Append a user/assistant turn and reset the session TTL."""
+        key = f"session:{session_id}:history"
+        try:
+            raw = await self.redis.get(key)
+            history = json.loads(raw) if raw else []
+            history.append({"role": "user", "content": user_msg})
+            history.append({"role": "assistant", "content": assistant_msg})
+            session_ttl = int(timedelta(hours=self.settings.session_ttl_hours).total_seconds())
+            await self.redis.set(key, json.dumps(history), ex=session_ttl)
+        except Exception as e:
+            logger.error(f"Error appending to session history: {e}")

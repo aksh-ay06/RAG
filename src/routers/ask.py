@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import uuid
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
@@ -91,16 +92,27 @@ async def ask_question(
     rag_tracer = RAGTracer(langfuse_tracer)
     start_time = time.time()
 
+    # Resolve session ID
+    session_id = request.session_id or uuid.uuid4().hex
+    has_session = request.session_id is not None
+
     with rag_tracer.trace_request("api_user", request.query) as trace:
         try:
-            # Check exact cache first
-            cached_response = None
-            if cache_client:
+            # Fetch conversation history (only when session is active)
+            history = []
+            if has_session and cache_client:
+                try:
+                    history = await cache_client.get_session_history(session_id)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch session history: {e}")
+
+            # Check exact cache only for stateless requests
+            if not has_session and cache_client:
                 try:
                     cached_response = await cache_client.find_cached_response(request)
                     if cached_response:
                         logger.info("Returning cached response for exact query match")
-                        return cached_response.model_copy(update={"cached": True})
+                        return cached_response.model_copy(update={"cached": True, "session_id": session_id})
                 except Exception as e:
                     logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
 
@@ -116,13 +128,14 @@ async def ask_question(
                     sources=[],
                     chunks_used=0,
                     search_mode="bm25" if not request.use_hybrid else "hybrid",
+                    session_id=session_id,
                 )
                 rag_tracer.end_request(trace, response.answer, time.time() - start_time)
                 return response
 
-            # Build prompt
+            # Build prompt (inject history when present)
             with rag_tracer.trace_prompt_construction(trace, chunks) as prompt_span:
-                final_prompt = get_prompt_builder().create_rag_prompt(request.query, chunks)
+                final_prompt = get_prompt_builder().create_rag_prompt(request.query, chunks, history or None)
                 rag_tracer.end_prompt(prompt_span, final_prompt)
 
             # Generate answer
@@ -138,12 +151,20 @@ async def ask_question(
                 sources=sources,
                 chunks_used=len(chunks),
                 search_mode="bm25" if not request.use_hybrid else "hybrid",
+                session_id=session_id,
             )
 
             rag_tracer.end_request(trace, answer, time.time() - start_time)
 
-            # Store response in exact match cache
+            # Persist turn to session history
             if cache_client:
+                try:
+                    await cache_client.append_to_session_history(session_id, request.query, answer)
+                except Exception as e:
+                    logger.warning(f"Failed to append to session history: {e}")
+
+            # Store in exact-match cache only for stateless requests
+            if not has_session and cache_client:
                 try:
                     await cache_client.store_response(request, response)
                 except Exception as e:
@@ -167,20 +188,31 @@ async def ask_question_stream(
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
 
+    # Resolve session ID before entering the generator
+    session_id = request.session_id or uuid.uuid4().hex
+    has_session = request.session_id is not None
+
     async def generate_stream():
         rag_tracer = RAGTracer(langfuse_tracer)
         start_time = time.time()
 
         with rag_tracer.trace_request("api_user", request.query) as trace:
             try:
-                # Check exact cache first
-                if cache_client:
+                # Fetch conversation history (only when session is active)
+                history = []
+                if has_session and cache_client:
+                    try:
+                        history = await cache_client.get_session_history(session_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch session history: {e}")
+
+                # Check exact cache only for stateless requests
+                if not has_session and cache_client:
                     try:
                         cached_response = await cache_client.find_cached_response(request)
                         if cached_response:
                             logger.info("Returning cached response for exact streaming query match")
 
-                            # Send metadata first (same format as non-cached)
                             metadata_response = {
                                 "sources": cached_response.sources,
                                 "chunks_used": cached_response.chunks_used,
@@ -188,14 +220,12 @@ async def ask_question_stream(
                             }
                             yield f"data: {json.dumps(metadata_response)}\n\n"
 
-                            # Stream the cached response in fixed-size chunks to preserve formatting
                             text = cached_response.answer
                             chunk_size = 20
                             for i in range(0, len(text), chunk_size):
                                 yield f"data: {json.dumps({'chunk': text[i:i + chunk_size]})}\n\n"
 
-                            # Send completion signal with just the final answer
-                            yield f"data: {json.dumps({'answer': cached_response.answer, 'cached': True, 'done': True})}\n\n"
+                            yield f"data: {json.dumps({'answer': cached_response.answer, 'cached': True, 'session_id': session_id, 'done': True})}\n\n"
                             return
                     except Exception as e:
                         logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
@@ -206,17 +236,17 @@ async def ask_question_stream(
                 )
 
                 if not chunks:
-                    yield f"data: {json.dumps({'answer': 'No relevant information found.', 'sources': [], 'done': True})}\n\n"
+                    yield f"data: {json.dumps({'answer': 'No relevant information found.', 'sources': [], 'session_id': session_id, 'done': True})}\n\n"
                     return
 
                 # Send metadata first
                 search_mode = "bm25" if not request.use_hybrid else "hybrid"
-                metadata_response = {"sources": sources, "chunks_used": len(chunks), "search_mode": search_mode}
+                metadata_response = {"sources": sources, "chunks_used": len(chunks), "search_mode": search_mode, "session_id": session_id}
                 yield f"data: {json.dumps(metadata_response)}\n\n"
 
-                # Build prompt
+                # Build prompt (inject history when present)
                 with rag_tracer.trace_prompt_construction(trace, chunks) as prompt_span:
-                    final_prompt = get_prompt_builder().create_rag_prompt(request.query, chunks)
+                    final_prompt = get_prompt_builder().create_rag_prompt(request.query, chunks, history or None)
                     rag_tracer.end_prompt(prompt_span, final_prompt)
 
                 # Stream generation
@@ -232,13 +262,20 @@ async def ask_question_stream(
 
                         if chunk.get("done", False):
                             rag_tracer.end_generation(gen_span, full_response, request.model)
-                            yield f"data: {json.dumps({'answer': full_response, 'done': True})}\n\n"
+                            yield f"data: {json.dumps({'answer': full_response, 'session_id': session_id, 'done': True})}\n\n"
                             break
 
                 rag_tracer.end_request(trace, full_response, time.time() - start_time)
 
-                # Store response in exact match cache
+                # Persist turn to session history
                 if cache_client and full_response:
+                    try:
+                        await cache_client.append_to_session_history(session_id, request.query, full_response)
+                    except Exception as e:
+                        logger.warning(f"Failed to append to session history: {e}")
+
+                # Store in exact-match cache only for stateless requests
+                if not has_session and cache_client and full_response:
                     try:
                         response_to_cache = AskResponse(
                             query=request.query,

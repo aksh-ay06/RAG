@@ -1,7 +1,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 from src.schemas.ollama import RAGResponse
@@ -31,17 +31,28 @@ class RAGPromptBuilder:
             )
         return prompt_file.read_text().strip()
 
-    def create_rag_prompt(self, query: str, chunks: List[Dict[str, Any]]) -> str:
+    def create_rag_prompt(
+        self, query: str, chunks: List[Dict[str, Any]], history: Optional[List[Dict[str, str]]] = None
+    ) -> str:
         """Create a RAG prompt with query and retrieved chunks.
 
         Args:
             query: User's question
             chunks: List of retrieved chunks with metadata from OpenSearch
+            history: Optional list of prior conversation turns (role/content dicts)
 
         Returns:
             Formatted prompt string
         """
         prompt = f"{self.system_prompt}\n\n"
+
+        if history:
+            prompt += "### Conversation History:\n\n"
+            for msg in history:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                prompt += f"{role}: {msg['content']}\n"
+            prompt += "\n"
+
         prompt += "### Context from Papers:\n\n"
 
         for i, chunk in enumerate(chunks, 1):

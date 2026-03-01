@@ -145,6 +145,7 @@ class RedisSettings(BaseConfigSettings):
 
     # Cache settings
     ttl_hours: int = 6  # Cache TTL in hours
+    session_ttl_hours: int = 24  # Session history expires after 24 hours of inactivity
 
 
 class Settings(BaseConfigSettings):
