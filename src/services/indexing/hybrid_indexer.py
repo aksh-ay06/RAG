@@ -94,9 +94,7 @@ class HybridIndexingService:
                     else paper_data.get("authors", ""),
                     "abstract": paper_data.get("abstract", ""),
                     "categories": paper_data.get("categories", []),
-                    "published_date": paper_data.get("published_date").isoformat()
-                    if paper_data.get("published_date")
-                    else None,
+                    "published_date": paper_data.get("published_date"),
                 }
 
                 chunks_with_embeddings.append({"chunk_data": chunk_data, "embedding": embedding})
