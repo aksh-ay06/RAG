@@ -2,9 +2,7 @@
 name = "rag"
 version = "0.1.0"
 description = "Personal Research Paper Curator"
-readme = "README.md"
 requires-python = ">=3.12,<3.13"
-
 dependencies = [
     "fastapi[standard]>=0.115.12",
     "uvicorn>=0.34.0",
@@ -18,7 +16,9 @@ dependencies = [
     "httpx>=0.28.1",
     "docling>=2.43.0",
     "python-dateutil>=2.9.0.post0",
+    "sentence-transformers>=5.1.0",
 ]
+readme = "README.md"
 
 [dependency-groups]
 dev = [

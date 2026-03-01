@@ -3,6 +3,7 @@ from typing import Annotated, Generator
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
+from src.services.embeddings.jina_client import JinaEmbeddingsClient
 from src.services.opensearch.client import OpenSearchClient
 from src.config import Settings
 from src.db.interfaces.base import BaseDatabase
@@ -42,6 +43,9 @@ def get_pdf_parser(request: Request):
     """Get PDF parser service from the request state."""
     return request.app.state.pdf_parser
 
+def get_embeddings_service(request: Request) -> JinaEmbeddingsClient:
+    return request.app.state.embeddings_service
+
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[BaseDatabase, Depends(get_database)]
@@ -49,3 +53,4 @@ SessionDep = Annotated[Session, Depends(get_db_session)]
 OpenSearchDep = Annotated[OpenSearchClient, Depends(get_opensearch_client)]
 ArxivDep = Annotated[dict, Depends(get_arxiv_client)]
 PdfParserDep = Annotated[dict, Depends(get_pdf_parser)]
+EmbeddingsDep = Annotated[JinaEmbeddingsClient, Depends(get_embeddings_service)]
