@@ -21,11 +21,12 @@ class OpenSearchClient:
         self.settings = settings
         self.index_name = f"{settings.opensearch.index_name}-{settings.opensearch.chunk_index_suffix}"
 
+        use_ssl = settings.opensearch.use_ssl
         self.client = OpenSearch(
             hosts=[host],
-            use_ssl=False,
-            verify_certs=False,
-            ssl_show_warn=False,
+            use_ssl=use_ssl,
+            verify_certs=use_ssl,
+            ssl_show_warn=use_ssl,
         )
 
         logger.info(f"OpenSearch client initialized with host: {host}")

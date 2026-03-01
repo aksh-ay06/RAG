@@ -29,6 +29,8 @@ class CacheClient:
             "categories": sorted(request.categories) if request.categories else [],
         }
         key_string = json.dumps(key_data, sort_keys=True)
+        # 16 hex chars = 64 bits of the SHA-256 digest. Collision probability
+        # is negligible for a bounded query cache (birthday bound ~2^32 entries).
         key_hash = hashlib.sha256(key_string.encode()).hexdigest()[:16]
         return f"exact_cache:{key_hash}"
 

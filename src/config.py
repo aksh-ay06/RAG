@@ -92,6 +92,7 @@ class OpenSearchSettings(BaseConfigSettings):
     )
 
     host: str = "http://localhost:9200"
+    use_ssl: bool = False  # Set True with a proper CA cert in staging/production
     index_name: str = "arxiv-papers"
     chunk_index_suffix: str = "chunks"  # Creates single hybrid index: {index_name}-{suffix}
     max_text_size: int = 1000000
