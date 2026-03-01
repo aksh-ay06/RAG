@@ -7,6 +7,8 @@ from src.schemas.indexing.models import ChunkMetadata, TextChunk
 
 logger = logging.getLogger(__name__)
 
+_WORD_RE = re.compile(r"\S+")
+
 
 class TextChunker:
     """Service for chunking text into overlapping segments.
@@ -40,7 +42,7 @@ class TextChunker:
         :returns: List of words
         """
         # Split on whitespace while keeping the words
-        words = re.findall(r"\S+", text)
+        words = _WORD_RE.findall(text)
         return words
 
     def _reconstruct_text(self, words: List[str]) -> str:
@@ -111,7 +113,7 @@ class TextChunker:
             if words:
                 return [
                     TextChunk(
-                        text=self._reconstruct_text(words, text),
+                        text=self._reconstruct_text(words),
                         metadata=ChunkMetadata(
                             chunk_index=0,
                             start_char=0,
@@ -402,13 +404,13 @@ class TextChunker:
             combined_content.append(f"Section: {section_title}\n\n{content}")
             total_words += word_count
 
-        combined_text = f"{header}{'\\n\\n'.join(combined_content)}"
+        combined_text = f"{header}{'\n\n'.join(combined_content)}"
 
         # If still too small, combine with previous chunk if possible
         if total_words + len(header.split()) < 200 and existing_chunks:
             # Try to merge with previous chunk
             prev_chunk = existing_chunks[-1]
-            merged_text = f"{prev_chunk.text}\\n\\n{'\\n\\n'.join(combined_content)}"
+            merged_text = f"{prev_chunk.text}\n\n{'\n\n'.join(combined_content)}"
 
             # Update the previous chunk
             existing_chunks[-1] = TextChunk(

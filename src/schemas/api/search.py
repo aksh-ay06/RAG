@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchRequest(BaseModel):
@@ -16,6 +16,8 @@ class SearchRequest(BaseModel):
 class HybridSearchRequest(BaseModel):
     """Request model for hybrid search supporting all search modes."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     query: str = Field(..., description="Search query text", min_length=1, max_length=500)
     size: int = Field(10, description="Number of results to return", ge=1, le=100)
     from_: int = Field(0, description="Offset for pagination", ge=0, alias="from")
@@ -23,18 +25,6 @@ class HybridSearchRequest(BaseModel):
     latest_papers: bool = Field(False, description="Sort by publication date instead of relevance")
     use_hybrid: bool = Field(True, description="Enable hybrid search (BM25 + vector) with automatic embedding generation")
     min_score: float = Field(0.0, description="Minimum score threshold for results", ge=0.0)
-
-    class Config:
-        allow_population_by_field_name = True
-        json_schema_extra = {
-            "example": {
-                "query": "machine learning neural networks",
-                "size": 10,
-                "categories": ["cs.AI", "cs.LG"],
-                "latest_papers": False,
-                "use_hybrid": True,
-            }
-        }
 
 
 class SearchHit(BaseModel):
@@ -58,6 +48,8 @@ class SearchHit(BaseModel):
 class SearchResponse(BaseModel):
     """Search response model."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     query: str
     total: int
     hits: List[SearchHit]
@@ -65,6 +57,3 @@ class SearchResponse(BaseModel):
     from_: int = Field(alias="from", description="Offset used for pagination")
     search_mode: Optional[str] = Field(None, description="Search mode used: bm25, vector, or hybrid")
     error: Optional[str] = None
-
-    class Config:
-        allow_population_by_field_name = True

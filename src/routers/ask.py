@@ -2,7 +2,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -78,6 +78,61 @@ async def _prepare_chunks_and_sources(
     return chunks, list(sources_set), arxiv_ids
 
 
+async def _load_session_context(
+    request: AskRequest,
+    session_id: str,
+    has_session: bool,
+    cache_client,
+) -> tuple[List[Dict], Optional[AskResponse]]:
+    """Load session history (for session requests) or check the exact-match cache
+    (for stateless requests).
+
+    Returns (history, cached_response). Exactly one of the two will be non-empty:
+    - history is populated when has_session=True
+    - cached_response is set on a stateless cache hit
+    """
+    if has_session and cache_client:
+        try:
+            history = await cache_client.get_session_history(session_id)
+            return history, None
+        except Exception as e:
+            logger.warning(f"Failed to fetch session history for {session_id}: {e}")
+            return [], None
+
+    if not has_session and cache_client:
+        try:
+            cached = await cache_client.find_cached_response(request)
+            if cached:
+                return [], cached
+        except Exception as e:
+            logger.warning(f"Cache check failed, proceeding normally: {e}")
+
+    return [], None
+
+
+async def _persist_request(
+    request: AskRequest,
+    response: AskResponse,
+    session_id: str,
+    has_session: bool,
+    cache_client,
+    answer: str,
+) -> None:
+    """Persist the completed turn to session history and, for stateless requests,
+    to the exact-match cache."""
+    if cache_client:
+        try:
+            await cache_client.append_to_session_history(session_id, request.query, answer)
+        except Exception as e:
+            logger.warning(f"Failed to append to session history for {session_id}: {e}")
+
+    if not has_session and cache_client:
+        try:
+            await cache_client.store_response(request, response)
+        except Exception as e:
+            logger.warning(f"Failed to store response in cache: {e}")
+
+
 @ask_router.post("/ask", response_model=AskResponse)
 async def ask_question(
     request: AskRequest,
@@ -92,29 +147,18 @@ async def ask_question(
     rag_tracer = RAGTracer(langfuse_tracer)
     start_time = time.time()
 
-    # Resolve session ID
     session_id = request.session_id or uuid.uuid4().hex
     has_session = request.session_id is not None
 
     with rag_tracer.trace_request("api_user", request.query) as trace:
         try:
-            # Fetch conversation history (only when session is active)
-            history = []
-            if has_session and cache_client:
-                try:
-                    history = await cache_client.get_session_history(session_id)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch session history: {e}")
+            history, cached_response = await _load_session_context(
+                request, session_id, has_session, cache_client
+            )
 
-            # Check exact cache only for stateless requests
-            if not has_session and cache_client:
-                try:
-                    cached_response = await cache_client.find_cached_response(request)
-                    if cached_response:
-                        logger.info("Returning cached response for exact query match")
-                        return cached_response.model_copy(update={"cached": True, "session_id": session_id})
-                except Exception as e:
-                    logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
+            if cached_response:
+                logger.info("Returning cached response for exact query match")
+                return cached_response.model_copy(update={"cached": True, "session_id": session_id})
 
             # Retrieve chunks
             chunks, sources, _ = await _prepare_chunks_and_sources(
@@ -144,7 +188,6 @@ async def ask_question(
                 answer = rag_response.get("answer", "Unable to generate answer")
                 rag_tracer.end_generation(gen_span, answer, request.model)
 
-            # Prepare response
             response = AskResponse(
                 query=request.query,
                 answer=answer,
@@ -155,26 +198,12 @@ async def ask_question(
             )
 
             rag_tracer.end_request(trace, answer, time.time() - start_time)
-
-            # Persist turn to session history
-            if cache_client:
-                try:
-                    await cache_client.append_to_session_history(session_id, request.query, answer)
-                except Exception as e:
-                    logger.warning(f"Failed to append to session history: {e}")
-
-            # Store in exact-match cache only for stateless requests
-            if not has_session and cache_client:
-                try:
-                    await cache_client.store_response(request, response)
-                except Exception as e:
-                    logger.warning(f"Failed to store response in cache: {e}")
-
+            await _persist_request(request, response, session_id, has_session, cache_client, answer)
             return response
 
         except Exception as e:
             logger.error(f"Error processing request: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="An error occurred processing your request")
 
 
 @stream_router.post("/stream")
@@ -188,7 +217,6 @@ async def ask_question_stream(
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
 
-    # Resolve session ID before entering the generator
     session_id = request.session_id or uuid.uuid4().hex
     has_session = request.session_id is not None
 
@@ -198,37 +226,18 @@ async def ask_question_stream(
 
         with rag_tracer.trace_request("api_user", request.query) as trace:
             try:
-                # Fetch conversation history (only when session is active)
-                history = []
-                if has_session and cache_client:
-                    try:
-                        history = await cache_client.get_session_history(session_id)
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch session history: {e}")
+                history, cached_response = await _load_session_context(
+                    request, session_id, has_session, cache_client
+                )
 
-                # Check exact cache only for stateless requests
-                if not has_session and cache_client:
-                    try:
-                        cached_response = await cache_client.find_cached_response(request)
-                        if cached_response:
-                            logger.info("Returning cached response for exact streaming query match")
-
-                            metadata_response = {
-                                "sources": cached_response.sources,
-                                "chunks_used": cached_response.chunks_used,
-                                "search_mode": cached_response.search_mode,
-                            }
-                            yield f"data: {json.dumps(metadata_response)}\n\n"
-
-                            text = cached_response.answer
-                            chunk_size = 20
-                            for i in range(0, len(text), chunk_size):
-                                yield f"data: {json.dumps({'chunk': text[i:i + chunk_size]})}\n\n"
-
-                            yield f"data: {json.dumps({'answer': cached_response.answer, 'cached': True, 'session_id': session_id, 'done': True})}\n\n"
-                            return
-                    except Exception as e:
-                        logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
+                if cached_response:
+                    logger.info("Returning cached response for exact streaming query match")
+                    yield f"data: {json.dumps({'sources': cached_response.sources, 'chunks_used': cached_response.chunks_used, 'search_mode': cached_response.search_mode})}\n\n"
+                    text = cached_response.answer
+                    for i in range(0, len(text), 20):
+                        yield f"data: {json.dumps({'chunk': text[i:i + 20]})}\n\n"
+                    yield f"data: {json.dumps({'answer': cached_response.answer, 'cached': True, 'session_id': session_id, 'done': True})}\n\n"
+                    return
 
                 # Retrieve chunks
                 chunks, sources, _ = await _prepare_chunks_and_sources(
@@ -241,8 +250,7 @@ async def ask_question_stream(
 
                 # Send metadata first
                 search_mode = "bm25" if not request.use_hybrid else "hybrid"
-                metadata_response = {"sources": sources, "chunks_used": len(chunks), "search_mode": search_mode, "session_id": session_id}
-                yield f"data: {json.dumps(metadata_response)}\n\n"
+                yield f"data: {json.dumps({'sources': sources, 'chunks_used': len(chunks), 'search_mode': search_mode, 'session_id': session_id})}\n\n"
 
                 # Build prompt (inject history when present)
                 with rag_tracer.trace_prompt_construction(trace, chunks) as prompt_span:
@@ -267,30 +275,18 @@ async def ask_question_stream(
 
                 rag_tracer.end_request(trace, full_response, time.time() - start_time)
 
-                # Persist turn to session history
-                if cache_client and full_response:
-                    try:
-                        await cache_client.append_to_session_history(session_id, request.query, full_response)
-                    except Exception as e:
-                        logger.warning(f"Failed to append to session history: {e}")
-
-                # Store in exact-match cache only for stateless requests
-                if not has_session and cache_client and full_response:
-                    try:
-                        response_to_cache = AskResponse(
-                            query=request.query,
-                            answer=full_response,
-                            sources=sources,
-                            chunks_used=len(chunks),
-                            search_mode=search_mode,
-                        )
-                        await cache_client.store_response(request, response_to_cache)
-                    except Exception as e:
-                        logger.warning(f"Failed to store streaming response in cache: {e}")
+                response = AskResponse(
+                    query=request.query,
+                    answer=full_response,
+                    sources=sources,
+                    chunks_used=len(chunks),
+                    search_mode=search_mode,
+                )
+                await _persist_request(request, response, session_id, has_session, cache_client, full_response)
 
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield f"data: {json.dumps({'error': 'An error occurred processing your request'})}\n\n"
 
     return StreamingResponse(
         generate_stream(), media_type="text/plain", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}

@@ -95,7 +95,7 @@ class OllamaClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 data = {"model": model, "prompt": prompt, "stream": stream, **kwargs}
 
-                logger.info(f"Sending request to Ollama: model={model}, stream={stream}, extra_params={kwargs}")
+                logger.debug(f"Sending request to Ollama: model={model}, stream={stream}, extra_params={kwargs}")
                 response = await client.post(f"{self.base_url}/api/generate", json=data)
 
                 if response.status_code == 200:
@@ -128,7 +128,7 @@ class OllamaClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 data = {"model": model, "prompt": prompt, "stream": True, **kwargs}
 
-                logger.info(f"Starting streaming generation: model={model}")
+                logger.debug(f"Starting streaming generation: model={model}")
 
                 async with client.stream("POST", f"{self.base_url}/api/generate", json=data) as response:
                     if response.status_code != 200:

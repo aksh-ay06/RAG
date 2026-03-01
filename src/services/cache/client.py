@@ -18,6 +18,7 @@ class CacheClient:
         self.redis = redis_client
         self.settings = settings
         self.ttl = int(timedelta(hours=settings.ttl_hours).total_seconds())
+        self.session_ttl = int(timedelta(hours=settings.session_ttl_hours).total_seconds())
 
     def _generate_cache_key(self, request: AskRequest) -> str:
         """Generate exact cache key based on request parameters."""
@@ -94,14 +95,30 @@ class CacheClient:
     async def append_to_session_history(
         self, session_id: str, user_msg: str, assistant_msg: str
     ) -> None:
-        """Append a user/assistant turn and reset the session TTL."""
+        """Append a user/assistant turn atomically and reset the session TTL.
+
+        Uses a Redis pipeline with WATCH to prevent lost updates from concurrent
+        requests on the same session. History is trimmed to the last 10 messages
+        (5 turns) before storing to prevent unbounded growth.
+        """
         key = f"session:{session_id}:history"
         try:
-            raw = await self.redis.get(key)
-            history = json.loads(raw) if raw else []
-            history.append({"role": "user", "content": user_msg})
-            history.append({"role": "assistant", "content": assistant_msg})
-            session_ttl = int(timedelta(hours=self.settings.session_ttl_hours).total_seconds())
-            await self.redis.set(key, json.dumps(history), ex=session_ttl)
+            async with self.redis.pipeline() as pipe:
+                while True:
+                    try:
+                        await pipe.watch(key)
+                        raw = await pipe.get(key)
+                        history = json.loads(raw) if raw else []
+                        history.append({"role": "user", "content": user_msg})
+                        history.append({"role": "assistant", "content": assistant_msg})
+                        # Keep only the last 10 messages (5 turns)
+                        history = history[-10:]
+                        pipe.multi()
+                        pipe.set(key, json.dumps(history), ex=self.session_ttl)
+                        await pipe.execute()
+                        break
+                    except Exception:
+                        # WATCH fired — another request modified the key; retry
+                        continue
         except Exception as e:
-            logger.error(f"Error appending to session history: {e}")
+            logger.error(f"Error appending to session history for {session_id}: {e}")
