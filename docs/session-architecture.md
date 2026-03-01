@@ -4,26 +4,17 @@
 
 ```mermaid
 flowchart TD
-    Client([Client])
+    Client(Client)
     Client -->|query| Router[Router]
     Router --> Q{Session?}
-
-    subgraph Redis
-        Hist[History]
-        Cache[Cache]
-        Save[Save Turn]
-    end
-
-    Q -->|yes| Hist
-    Q -->|no|  Cache
-
-    Cache -->|hit|  Client
+    Q -->|yes| History[History]
+    Q -->|no| Cache[Cache]
+    Cache -->|hit| Client
     Cache -->|miss| Search[OpenSearch]
-    Hist --> Search
-
+    History --> Search
     Search --> Prompt[Prompt Builder]
     Prompt --> LLM[Ollama]
-    LLM --> Save
+    LLM --> Save[Save Turn]
     Save --> Client
 ```
 
