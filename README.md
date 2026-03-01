@@ -1,22 +1,22 @@
-# arXiv RAG — Research Paper Q&A with Multi-Turn Dialogue
+# arXiv RAG: Research Paper Q&A with Multi-Turn Dialogue
 
-A production-grade Retrieval-Augmented Generation system that ingests arXiv CS papers daily and lets you ask questions about them in a conversational chat interface. All LLM inference runs locally — no OpenAI API key required.
+A RAG system that pulls in arXiv CS papers every day and lets you ask questions about them through a chat interface. All LLM inference runs locally, so no OpenAI key is needed.
 
 ---
 
 ## The Problem
 
-Machine learning research moves faster than anyone can read. Hundreds of new papers appear on arXiv every week in cs.AI and cs.LG alone. Skimming abstracts is not enough — you need to ask cross-paper questions like *"how do the attention mechanisms in these three papers differ?"* or build on a previous question without repeating context every time.
+ML research moves faster than anyone can keep up with. Hundreds of papers drop on arXiv every week in cs.AI and cs.LG alone. Skimming abstracts only gets you so far. What you really want is to ask questions like *"how do the attention mechanisms in these papers differ?"* and have the system do the reading for you, while remembering what you already asked.
 
-This system solves that by:
+This project does that:
 
-- **Automatically ingesting** new arXiv papers every weekday morning (Airflow DAG)
-- **Parsing PDFs** into semantically meaningful sections rather than arbitrary character windows (Docling)
-- **Indexing chunks** with both keyword and vector representations for hybrid retrieval (OpenSearch)
-- **Answering questions** grounded in retrieved paper excerpts using a local LLM (Ollama)
-- **Maintaining conversation context** across follow-up questions within a session (Redis)
-- **Streaming answers** token-by-token to a chat UI (Gradio + SSE)
-- **Tracing every request** through the pipeline for debugging and performance analysis (Langfuse)
+- **Automatic ingestion** of new arXiv papers every weekday morning (Airflow DAG)
+- **PDF parsing** that respects document structure instead of splitting on arbitrary character windows (Docling)
+- **Hybrid search** that combines keyword and vector retrieval for better results (OpenSearch)
+- **Local LLM answers** grounded in the retrieved paper excerpts (Ollama)
+- **Conversation memory** so follow-up questions work naturally within a session (Redis)
+- **Streaming responses** token-by-token to a chat UI (Gradio + SSE)
+- **Full request tracing** for debugging and performance analysis (Langfuse)
 
 ---
 
@@ -115,11 +115,11 @@ flowchart LR
 
 ### 1. Local LLM via Ollama
 
-**Decision:** Run `llama3.2:1b` locally instead of calling OpenAI or Anthropic.
+**Decision:** Run `llama3.2:1b` locally rather than calling OpenAI or Anthropic.
 
-**Why:** Zero API cost, no data leaving the machine, no rate limits, and full control over the model. For a research paper Q&A tool where queries can be long and answers take time, per-token billing adds up quickly.
+**Why:** No API cost, no data leaving the machine, no rate limits. For a research Q&A tool where prompts are long and answers take time, per-token billing adds up fast.
 
-**Trade-off:** A 1B parameter model produces noticeably weaker answers than GPT-4 or Claude — less synthesis, more parroting of retrieved text. The system supports larger Ollama models (`llama3.2:3b`, `llama3.1:8b`, `qwen2.5:7b`) via a dropdown in the UI, but they require more RAM and are slower.
+**Trade-off:** A 1B parameter model is noticeably weaker than GPT-4 or Claude. It tends to paraphrase retrieved text rather than synthesise across it. You can switch to a larger model (`llama3.2:3b`, `llama3.1:8b`, `qwen2.5:7b`) from the UI dropdown, but those need more RAM and are slower.
 
 ---
 
@@ -127,73 +127,71 @@ flowchart LR
 
 **Decision:** Use the Jina AI embeddings API (`jina-embeddings-v3`, 1024 dimensions) rather than a local embedding model.
 
-**Why:** Jina's search-specific models (`retrieval.passage` and `retrieval.query` tasks) outperform general-purpose sentence transformers on retrieval benchmarks. Running a quality embedding model locally would require a GPU or tolerate slow CPU inference; Jina's free tier covers typical use.
+**Why:** Jina's search-specific task modes (`retrieval.passage` and `retrieval.query`) outperform general sentence transformers on retrieval benchmarks. Running a good embedding model locally needs a GPU or very slow CPU inference. Jina's free tier covers normal usage.
 
-**Trade-off:** The system takes an external API dependency for embedding. If Jina is unavailable, the code gracefully falls back to BM25-only search — quality degrades but the system keeps working.
+**Trade-off:** This adds an external API dependency. If Jina is unreachable, the code falls back to BM25-only search automatically. Quality drops but the system keeps working.
 
 ---
 
 ### 3. OpenSearch as the Unified Search Backend
 
-**Decision:** Use a single OpenSearch index for both BM25 keyword search and k-NN vector search, rather than running a dedicated vector database (Pinecone, Weaviate, Chroma) alongside a full-text engine.
+**Decision:** Use one OpenSearch index for both BM25 keyword search and k-NN vector search, rather than running a dedicated vector database alongside a separate full-text engine.
 
-**Why:** Avoids operating two separate search services and keeping them in sync. OpenSearch's k-NN plugin (HNSW via nmslib) handles 1024-dim vectors well at this scale, and its built-in BM25 engine is mature.
+**Why:** Fewer services to run and keep in sync. OpenSearch's k-NN plugin (HNSW via nmslib) handles 1024-dim vectors fine at this scale, and its BM25 engine is solid.
 
-**Trade-off:** OpenSearch is heavier than a purpose-built vector DB and requires more RAM (~2 GB). Purpose-built vector databases often provide better ANN performance at scale, but the paper corpus here is small enough that the difference is negligible.
+**Trade-off:** OpenSearch is heavier than a purpose-built vector DB and needs around 2 GB of RAM. Purpose-built vector databases can squeeze out better ANN performance at scale, but the paper corpus here is small enough that it does not matter.
 
 ---
 
 ### 4. Hybrid Search with Reciprocal Rank Fusion
 
-**Decision:** Combine BM25 and vector search results using OpenSearch's RRF (Reciprocal Rank Fusion) pipeline rather than a weighted linear combination.
+**Decision:** Combine BM25 and vector search results using OpenSearch's RRF pipeline rather than a weighted linear combination.
 
-**Why:** RRF is robust to score-scale differences between the two retrieval systems without requiring manual weight tuning. It consistently outperforms naively weighted fusion across domains.
+**Why:** RRF handles the score-scale mismatch between BM25 and cosine similarity without manual weight tuning. It consistently beats naive weighted fusion across different domains.
 
-**Trade-off:** RRF adds a small amount of latency (an extra pipeline stage inside OpenSearch). Linear score fusion is faster but brittle — BM25 scores and cosine similarity scores live on different scales and need careful normalisation to combine meaningfully.
+**Trade-off:** RRF adds a small latency overhead (an extra pipeline stage inside OpenSearch). A linear combination is faster but fragile because BM25 scores and cosine similarities live on completely different scales and need careful normalisation to blend sensibly.
 
 ---
 
 ### 5. Section-Based Chunking
 
-**Decision:** Parse PDFs with Docling to extract section structure, then chunk at section boundaries with a 600-word target and 100-word overlap.
+**Decision:** Use Docling to extract the section structure from PDFs, then chunk at section boundaries with a 600-word target and 100-word overlap.
 
-**Why:** Arbitrary character or token splits frequently cut across paragraph and section boundaries, producing chunks that lose their semantic context. Section-aware chunking keeps related content together and improves retrieval precision.
+**Why:** Splitting on arbitrary character counts cuts across paragraphs and section boundaries, which hurts retrieval quality. Keeping related content together means retrieved chunks actually make sense in isolation.
 
-**Trade-off:** Docling is a heavy dependency (~1 GB installed) and parses PDFs significantly more slowly than a simple text extractor like `pdfplumber`. For a batch ingestion pipeline that runs nightly, this is acceptable; for real-time ingestion it would not be.
+**Trade-off:** Docling is a heavy dependency (about 1 GB installed) and parses PDFs much more slowly than a simple extractor like `pdfplumber`. For a nightly batch pipeline this is fine. For real-time ingestion it would not be.
 
 ---
 
 ### 6. Redis for Both Caching and Session State
 
-**Decision:** Use Redis for two distinct purposes — exact-match query caching (6 h TTL) and multi-turn session history (24 h rolling TTL) — rather than a dedicated session store or in-memory cache.
+**Decision:** Use Redis for exact-match query caching (6 hour TTL) and multi-turn session history (24 hour rolling TTL), rather than separate dedicated systems.
 
-**Why:** Redis handles both use cases well with its TTL support and LRU eviction. A single shared Redis instance avoids running an extra service.
+**Why:** Redis handles both jobs well with native TTL support and LRU eviction. One shared instance means one fewer service to operate.
 
-**Trade-off:** Both caches share the same 256 MB memory limit. Under high session load, LRU eviction could discard exact-match cache entries early. For the expected usage pattern (a handful of concurrent users) this is not a concern.
+**Trade-off:** Both caches share a 256 MB memory budget. Under heavy session load, LRU eviction could start dropping exact-match cache entries. For a small number of concurrent users this is not a real concern.
 
-**Cache invalidation:** Exact-match cache keys are SHA-256 hashes of the full request parameters (query, model, top_k, use_hybrid, categories). Two requests that differ in any parameter get different cache entries. Sessions are bypassed for exact-match caching — if a `session_id` is present, the cache is skipped entirely and history is injected into the prompt instead.
+Cache keys are SHA-256 hashes of the full request parameters (query, model, top_k, use_hybrid, categories). Session requests bypass the exact-match cache entirely since history is injected into the prompt instead.
 
 ---
 
 ### 7. Stateless-First Session Design
 
-**Decision:** Requests without a `session_id` are fully stateless and cache-eligible. Sessions are opt-in: a client passes back the `session_id` returned by the first response to continue a conversation.
+**Decision:** Requests without a `session_id` are fully stateless and cache-eligible. Sessions are opt-in: the client passes back the `session_id` from the first response to continue a conversation.
 
-**Why:** This keeps the common case (single question) fast and cache-friendly. Stateful sessions are only as expensive as they need to be.
+**Why:** Single questions stay fast and cache-friendly. Sessions are only as expensive as they need to be.
 
-**Trade-off:** The client (Gradio UI) is responsible for storing and sending the `session_id`. If the UI is refreshed or the session_id is lost, conversation history cannot be recovered — there is no user authentication layer to reconnect sessions across devices.
-
-Session history is capped at the last **10 messages (5 turns)** to keep the prompt size manageable for small local models.
+**Trade-off:** The Gradio UI is responsible for holding and sending the `session_id`. If the page is refreshed or the ID is lost, there is no way to reconnect to the old conversation since there is no authentication layer. Session history is also capped at the last 10 messages (5 turns) to keep prompt sizes manageable for small local models.
 
 ---
 
 ### 8. Airflow for Ingestion Orchestration
 
-**Decision:** Schedule the daily paper ingestion pipeline with Apache Airflow rather than a cron job or a simple Python script.
+**Decision:** Schedule the daily ingestion pipeline with Apache Airflow rather than a cron job.
 
-**Why:** Airflow provides retry logic, task-level failure isolation, a UI for monitoring past runs, and a clear DAG definition that documents the pipeline dependencies.
+**Why:** Airflow gives you retry logic, task-level failure isolation, a UI to inspect past runs, and a DAG definition that makes the pipeline dependencies explicit.
 
-**Trade-off:** Airflow adds significant operational weight (its own PostgreSQL schema, scheduler process, and web server). For a pipeline with five sequential tasks that runs once a day, a cron job calling a Python script would be far simpler. Airflow is chosen here because it mirrors production data engineering patterns.
+**Trade-off:** Airflow is heavy for what is essentially five sequential tasks running once a day. A cron job calling a Python script would be much simpler. It is used here because it reflects how production data pipelines are actually built.
 
 ---
 
@@ -201,9 +199,9 @@ Session history is capped at the last **10 messages (5 turns)** to keep the prom
 
 **Decision:** Wrap every RAG request in a Langfuse trace that records embeddings, search, prompt construction, and generation as child spans.
 
-**Why:** RAG pipelines have many moving parts. When an answer is wrong or slow, tracing makes it immediately clear which stage is responsible. Langfuse is self-hosted so traces never leave the machine.
+**Why:** RAG pipelines break in subtle ways. Tracing makes it easy to tell whether a bad answer came from retrieval, the prompt, or the model. Langfuse is self-hosted so traces stay on your machine.
 
-**Trade-off:** Langfuse requires three additional containers (Langfuse server, its PostgreSQL, and ClickHouse for analytics). If you don't need tracing, set `LANGFUSE__ENABLED=false` and all tracing calls become no-ops.
+**Trade-off:** Langfuse needs three extra containers (Langfuse server, PostgreSQL, and ClickHouse). If you do not want tracing, set `LANGFUSE__ENABLED=false` and every tracing call becomes a no-op.
 
 ---
 
@@ -214,9 +212,9 @@ Session history is capped at the last **10 messages (5 turns)** to keep the prom
 | Requirement | Version | Notes |
 |---|---|---|
 | Docker + Docker Compose | 24+ | All services run in containers |
-| Python | 3.12+ | For running notebooks and Gradio UI |
+| Python | 3.12+ | For notebooks and the Gradio UI |
 | [uv](https://docs.astral.sh/uv/) | latest | Fast Python package manager |
-| [Jina API key](https://jina.ai/) | — | Free tier is sufficient |
+| [Jina API key](https://jina.ai/) | free tier | Only external key you need |
 | RAM | 8 GB minimum | 16 GB recommended for larger models |
 | Disk | ~15 GB | Models, PDFs, OpenSearch data |
 
@@ -234,13 +232,13 @@ uv sync
 cp .env .env.local   # use as a template, or edit .env directly
 ```
 
-The only values you must set:
+The only values you need to set:
 
 ```bash
 # Required: Jina AI embedding API key (free at https://jina.ai/)
 JINA_API_KEY=jina_...
 
-# Optional: Langfuse tracing (disable if you don't want it)
+# Optional: Langfuse tracing (disable if you do not want it)
 LANGFUSE__ENABLED=false        # set true and fill keys to enable
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
@@ -254,13 +252,11 @@ Everything else defaults to localhost ports that match the Docker Compose config
 make start
 ```
 
-This builds the FastAPI container and pulls images for OpenSearch, Ollama, Redis, PostgreSQL, Airflow, and Langfuse. First run takes several minutes.
-
-Wait for services to be healthy:
+This builds the FastAPI container and pulls images for OpenSearch, Ollama, Redis, PostgreSQL, Airflow, and Langfuse. The first run takes a few minutes.
 
 ```bash
 make health
-# or watch individual containers:
+# or check individual containers:
 docker compose ps
 ```
 
@@ -270,7 +266,7 @@ docker compose ps
 docker exec rag-ollama ollama pull llama3.2:1b
 ```
 
-Optional larger models (require more RAM and are slower):
+Larger optional models (need more RAM):
 ```bash
 docker exec rag-ollama ollama pull llama3.2:3b
 docker exec rag-ollama ollama pull llama3.1:8b
@@ -278,15 +274,13 @@ docker exec rag-ollama ollama pull llama3.1:8b
 
 ### 5. Ingest papers
 
-**Option A — Trigger the Airflow DAG (recommended)**
+**Option A: Trigger the Airflow DAG (recommended)**
 
 1. Open Airflow at http://localhost:8080 (login: `admin` / `admin`)
 2. Enable and trigger the `arxiv_paper_ingestion` DAG
-3. Watch it fetch papers → parse PDFs → embed chunks → index to OpenSearch
+3. Watch it fetch papers, parse PDFs, embed chunks, and index to OpenSearch
 
-**Option B — Run through the notebooks**
-
-Work through the modules in order — they explain every step and let you inspect intermediate results:
+**Option B: Work through the notebooks**
 
 ```bash
 uv run jupyter lab notebooks/
@@ -294,13 +288,13 @@ uv run jupyter lab notebooks/
 
 | Module | What it covers |
 |---|---|
-| 1 — Setup | Verify all services are running |
-| 2 — Integration | Fetch arXiv papers, parse PDFs, store in PostgreSQL |
-| 3 — OpenSearch | Build index, run BM25 queries |
-| 4 — Hybrid Search | Add vector embeddings, compare retrieval modes |
-| 5 — RAG System | Connect search to Ollama, end-to-end Q&A |
-| 6 — Caching | Exact-match cache, session state in Redis |
-| 7 — Multi-Turn | Conversation history, session IDs |
+| 1 | Verify all services are running |
+| 2 | Fetch arXiv papers, parse PDFs, store in PostgreSQL |
+| 3 | Build the OpenSearch index, run BM25 queries |
+| 4 | Add vector embeddings, compare retrieval modes |
+| 5 | Connect search to Ollama for end-to-end Q&A |
+| 6 | Exact-match cache and session state in Redis |
+| 7 | Conversation history and multi-turn sessions |
 
 ### 6. Start the chat UI
 
@@ -316,13 +310,13 @@ Open http://localhost:7861 and start asking questions.
 
 | Service | URL | Credentials |
 |---|---|---|
-| Chat UI (Gradio) | http://localhost:7861 | — |
-| API | http://localhost:8000 | — |
-| API docs (Swagger) | http://localhost:8000/docs | — |
+| Chat UI (Gradio) | http://localhost:7861 | none |
+| API | http://localhost:8000 | none |
+| API docs (Swagger) | http://localhost:8000/docs | none |
 | Airflow | http://localhost:8080 | admin / admin |
 | OpenSearch Dashboards | http://localhost:5601 | admin / admin |
 | Langfuse | http://localhost:3000 | set on first run |
-| Ollama | http://localhost:11434 | — |
+| Ollama | http://localhost:11434 | none |
 
 ---
 
