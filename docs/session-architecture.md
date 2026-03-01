@@ -1,121 +1,59 @@
 # Multi-Turn Dialogue Architecture
 
-## Request Flow
+## How a request flows through the system
 
 ```mermaid
 flowchart TD
-    Client(["Client\n(browser / curl / Gradio)"])
-    Client -->|"POST /api/v1/ask\nor /api/v1/stream\n{ query, session_id? }"| Router
+    Client(["Client"])
+    Client -->|"query + optional session_id"| Branch
 
-    subgraph Router["FastAPI Router  (src/routers/ask.py)"]
-        direction TB
-        Resolve["Resolve session_id\n(use provided OR uuid4().hex)"]
-        Branch{session_id\nprovided?}
-        Resolve --> Branch
-    end
+    Branch{{"session_id\nprovided?"}}
 
-    subgraph Redis["Redis"]
-        direction TB
-        ExactCache[("exact_cache:{hash}\nTTL: 6 h")]
-        SessionStore[("session:{id}:history\nTTL: 24 h\nlast 10 msgs kept")]
-    end
+    Branch -->|"Yes"| History[("Load history\nfrom Redis")]
+    Branch -->|"No"| Cache[("Check\nexact-match cache")]
 
-    Branch -->|"Yes → fetch prior context"| SessionStore
-    SessionStore -->|"[ ] or [{role,content}, …]"| Search
+    Cache -->|"Hit"| Done
+    Cache -->|"Miss"| Search
 
-    Branch -->|"No → check exact match"| ExactCache
-    ExactCache -->|"cache miss"| Search
-    ExactCache -->|"cache hit ✓"| CacheReturn["Stream / return\ncached answer"]
-    CacheReturn --> Client
+    History --> Search
 
-    subgraph Retrieval["Retrieval  (src/services/opensearch/client.py)"]
-        Search["OpenSearch\nhybrid search\n(BM25 + vector)"]
-    end
+    Search["Search OpenSearch\nfor relevant chunks"]
+    Search --> Prompt
 
-    Search -->|"top-k chunks"| PromptBuilder
+    Prompt["Build prompt\n— system instructions\n— conversation history ①\n— paper excerpts\n— question"]
+    Prompt --> LLM
 
-    subgraph Generation["Generation  (src/services/ollama/)"]
-        direction TB
-        PromptBuilder["RAGPromptBuilder\n─────────────────\nsystem prompt\n[Conversation History]\n  User: …\n  Assistant: …\nContext from Papers\n  [1. arXiv:id] …\nQuestion"]
-        Ollama["Ollama LLM\n(llama3.2 / configurable)"]
-        PromptBuilder -->|"final prompt"| Ollama
-    end
+    LLM["Ollama generates answer"]
+    LLM --> Save
 
-    Ollama -->|"answer text"| Persist
+    Save["Save turn to Redis history\nCache response ②"]
+    Save --> Done
 
-    subgraph Persist["Persist  (src/services/cache/client.py)"]
-        direction LR
-        AppendHistory["append_to_session_history\nsession:{id}:history"]
-        StoreCache["store_response\nexact_cache:{hash}"]
-        AppendHistory -. "always" .-> StoreCache
-    end
-
-    Persist -->|"session turn"| SessionStore
-    Persist -->|"stateless only"| ExactCache
-
-    Persist -->|"{ answer, session_id, sources, … }"| Client
+    Done(["Return answer + session_id"])
+    Done --> Client
 ```
 
-## Redis Key Spaces
+> ① History is only injected when a `session_id` was provided and prior turns exist.
+> ② Response is only written to the exact-match cache for stateless (no `session_id`) requests.
 
-```mermaid
-erDiagram
-    EXACT_CACHE {
-        string key        "exact_cache:{sha256[:16]}"
-        json   value      "AskResponse JSON"
-        int    ttl_hours  "6 (configurable)"
-    }
-    SESSION_HISTORY {
-        string key        "session:{uuid4_hex}:history"
-        json   value      "[{role, content}, …]  max 10 msgs"
-        int    ttl_hours  "24 (configurable, resets on each turn)"
-    }
-```
+---
 
-## Session vs Stateless Decision Matrix
+## What changes between stateless and session requests
 
-| | **No `session_id`** | **With `session_id`** |
+| | No `session_id` | With `session_id` |
+|---|:---:|:---:|
+| Load conversation history | — | ✓ |
+| Check exact-match cache | ✓ | — |
+| History injected into prompt | — | ✓ |
+| Save turn to history | ✓ | ✓ |
+| Write to exact-match cache | ✓ | — |
+| `session_id` in response | new UUID | echoed back |
+
+---
+
+## Redis storage
+
+| Key | Contains | Expires |
 |---|---|---|
-| Fetch history | ✗ | ✓ `get_session_history(id)` |
-| Check exact-match cache | ✓ | ✗ |
-| Inject history into prompt | ✗ | ✓ (if history non-empty) |
-| Append turn to history | ✓ | ✓ |
-| Store in exact-match cache | ✓ | ✗ |
-| `session_id` in response | ✓ (new) | ✓ (echoed) |
-
-## Component Map
-
-```mermaid
-graph LR
-    subgraph Config["src/config.py"]
-        RS["RedisSettings\n· ttl_hours = 6\n· session_ttl_hours = 24"]
-    end
-
-    subgraph Schemas["src/schemas/api/ask.py"]
-        AskReq["AskRequest\n+ session_id?: str"]
-        AskResp["AskResponse\n+ session_id?: str"]
-    end
-
-    subgraph Cache["src/services/cache/client.py"]
-        CC["CacheClient\n· find_cached_response()\n· store_response()\n· get_session_history()\n· append_to_session_history()"]
-    end
-
-    subgraph Prompts["src/services/ollama/prompts.py"]
-        PB["RAGPromptBuilder\n· create_rag_prompt(\n    query, chunks,\n    history=None\n  )"]
-    end
-
-    subgraph RouterFile["src/routers/ask.py"]
-        AskEP["POST /ask"]
-        StreamEP["POST /stream"]
-    end
-
-    RS --> CC
-    AskReq --> AskEP
-    AskReq --> StreamEP
-    CC --> AskEP
-    CC --> StreamEP
-    PB --> AskEP
-    PB --> StreamEP
-    AskEP --> AskResp
-    StreamEP --> AskResp
-```
+| `exact_cache:{hash}` | Cached response JSON | 6 h |
+| `session:{id}:history` | Last 10 messages (5 turns) | 24 h, resets each turn |
