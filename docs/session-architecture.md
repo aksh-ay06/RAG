@@ -5,11 +5,11 @@
 ```mermaid
 flowchart TD
     GU(Gradio UI)
-    GU -->|query + optional session_id| API[FastAPI]
-    API --> Q{session_id provided?}
+    GU -->|"query + optional session_id"| API[FastAPI]
+    API --> Q{"session_id provided?"}
 
     Q -->|yes| HL[Load history from Redis]
-    Q -->|no| CC{Exact cache hit?}
+    Q -->|no| CC{"Exact cache hit?"}
 
     CC -->|yes| RET[Return cached response]
     RET --> GU
@@ -22,7 +22,7 @@ flowchart TD
     PB --> LLM[Ollama LLM]
     LLM --> SH[Persist turn to Redis]
 
-    SH --> Q2{session_id provided?}
+    SH --> Q2{"session_id provided?"}
     Q2 -->|no| SC[Store in exact-match cache]
     Q2 -->|yes| RESP[Return response]
     SC --> RESP
