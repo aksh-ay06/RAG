@@ -128,6 +128,17 @@ class TextChunker:
                 ]
             return []
 
+        # Precompute prefix char lengths for O(1) per-chunk offset lookup.
+        # cumulative[i] = total chars up to (but not including) words[i] in the
+        # space-joined string, including the trailing space after each word.
+        cumulative = [0] * (len(words) + 1)
+        for i, w in enumerate(words):
+            cumulative[i + 1] = cumulative[i] + len(w) + 1  # +1 for space separator
+
+        def prefix_len(n: int) -> int:
+            """Length of ' '.join(words[:n])."""
+            return cumulative[n] - 1 if n > 0 else 0
+
         chunks = []
         chunk_index = 0
         current_position = 0
@@ -141,9 +152,9 @@ class TextChunker:
             chunk_words = words[chunk_start:chunk_end]
             chunk_text = self._reconstruct_text(chunk_words)
 
-            # Calculate character offsets (approximate)
-            start_char = len(" ".join(words[:chunk_start])) if chunk_start > 0 else 0
-            end_char = len(" ".join(words[:chunk_end]))
+            # O(1) character offsets using precomputed prefix lengths
+            start_char = prefix_len(chunk_start)
+            end_char = prefix_len(chunk_end)
 
             # Calculate overlaps
             overlap_with_previous = min(self.overlap_size, chunk_start) if chunk_start > 0 else 0

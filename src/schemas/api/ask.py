@@ -1,20 +1,13 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AskRequest(BaseModel):
     """Request model for RAG question answering."""
 
-    query: str = Field(..., description="User's question", min_length=1, max_length=1000)
-    top_k: int = Field(3, description="Number of top chunks to retrieve", ge=1, le=10)
-    use_hybrid: bool = Field(True, description="Use hybrid search (BM25 + vector)")
-    model: str = Field("llama3.2:1b", description="Ollama model to use for generation")
-    categories: Optional[List[str]] = Field(None, description="Filter by arXiv categories")
-    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue. Omit for single-turn.")
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "What are transformers in machine learning?",
                 "top_k": 3,
@@ -23,21 +16,21 @@ class AskRequest(BaseModel):
                 "categories": ["cs.AI", "cs.LG"],
             }
         }
+    )
+
+    query: str = Field(..., description="User's question", min_length=1, max_length=1000)
+    top_k: int = Field(3, description="Number of top chunks to retrieve", ge=1, le=10)
+    use_hybrid: bool = Field(True, description="Use hybrid search (BM25 + vector)")
+    model: str = Field("llama3.2:1b", description="Ollama model to use for generation")
+    categories: Optional[List[str]] = Field(None, description="Filter by arXiv categories")
+    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue. Omit for single-turn.")
 
 
 class AskResponse(BaseModel):
     """Response model for RAG question answering."""
 
-    query: str = Field(..., description="Original user question")
-    answer: str = Field(..., description="Generated answer from LLM")
-    sources: List[str] = Field(..., description="PDF URLs of source papers")
-    chunks_used: int = Field(..., description="Number of chunks used for generation")
-    search_mode: str = Field(..., description="Search mode used: bm25 or hybrid")
-    cached: bool = Field(False, description="Whether the response was served from cache")
-    session_id: Optional[str] = Field(None, description="Session ID to pass in subsequent requests.")
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "What are transformers in machine learning?",
                 "answer": "Transformers are a neural network architecture...",
@@ -46,3 +39,12 @@ class AskResponse(BaseModel):
                 "search_mode": "hybrid",
             }
         }
+    )
+
+    query: str = Field(..., description="Original user question")
+    answer: str = Field(..., description="Generated answer from LLM")
+    sources: List[str] = Field(..., description="PDF URLs of source papers")
+    chunks_used: int = Field(..., description="Number of chunks used for generation")
+    search_mode: str = Field(..., description="Search mode used: bm25 or hybrid")
+    cached: bool = Field(False, description="Whether the response was served from cache")
+    session_id: Optional[str] = Field(None, description="Session ID to pass in subsequent requests.")

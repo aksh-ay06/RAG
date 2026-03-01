@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -5,6 +6,7 @@ from datetime import timedelta
 from typing import Optional
 
 import redis.asyncio as aioredis
+from redis.exceptions import WatchError
 from src.config import RedisSettings
 from src.schemas.api.ask import AskRequest, AskResponse
 
@@ -102,9 +104,10 @@ class CacheClient:
         (5 turns) before storing to prevent unbounded growth.
         """
         key = f"session:{session_id}:history"
+        max_retries = 5
         try:
             async with self.redis.pipeline() as pipe:
-                while True:
+                for attempt in range(max_retries):
                     try:
                         await pipe.watch(key)
                         raw = await pipe.get(key)
@@ -116,9 +119,12 @@ class CacheClient:
                         pipe.multi()
                         pipe.set(key, json.dumps(history), ex=self.session_ttl)
                         await pipe.execute()
-                        break
-                    except Exception:
-                        # WATCH fired — another request modified the key; retry
+                        return
+                    except WatchError:
+                        # Another request modified the key; back off and retry
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(0.05 * (attempt + 1))
                         continue
+            logger.warning(f"Failed to append session history after {max_retries} retries for {session_id}")
         except Exception as e:
             logger.error(f"Error appending to session history for {session_id}: {e}")

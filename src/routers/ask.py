@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -110,19 +111,22 @@ async def _load_session_context(
     return [], None
 
 
+def _search_mode(use_hybrid: bool) -> str:
+    return "hybrid" if use_hybrid else "bm25"
+
+
 async def _persist_request(
     request: AskRequest,
     response: AskResponse,
     session_id: str,
     has_session: bool,
     cache_client,
-    answer: str,
 ) -> None:
     """Persist the completed turn to session history and, for stateless requests,
     to the exact-match cache."""
     if cache_client:
         try:
-            await cache_client.append_to_session_history(session_id, request.query, answer)
+            await cache_client.append_to_session_history(session_id, request.query, response.answer)
         except Exception as e:
             logger.warning(f"Failed to append to session history for {session_id}: {e}")
 
@@ -171,7 +175,7 @@ async def ask_question(
                     answer="I couldn't find any relevant information in the papers to answer your question.",
                     sources=[],
                     chunks_used=0,
-                    search_mode="bm25" if not request.use_hybrid else "hybrid",
+                    search_mode=_search_mode(request.use_hybrid),
                     session_id=session_id,
                 )
                 rag_tracer.end_request(trace, response.answer, time.time() - start_time)
@@ -193,12 +197,12 @@ async def ask_question(
                 answer=answer,
                 sources=sources,
                 chunks_used=len(chunks),
-                search_mode="bm25" if not request.use_hybrid else "hybrid",
+                search_mode=_search_mode(request.use_hybrid),
                 session_id=session_id,
             )
 
             rag_tracer.end_request(trace, answer, time.time() - start_time)
-            await _persist_request(request, response, session_id, has_session, cache_client, answer)
+            asyncio.create_task(_persist_request(request, response, session_id, has_session, cache_client))
             return response
 
         except Exception as e:
@@ -249,7 +253,7 @@ async def ask_question_stream(
                     return
 
                 # Send metadata first
-                search_mode = "bm25" if not request.use_hybrid else "hybrid"
+                search_mode = _search_mode(request.use_hybrid)
                 yield f"data: {json.dumps({'sources': sources, 'chunks_used': len(chunks), 'search_mode': search_mode, 'session_id': session_id})}\n\n"
 
                 # Build prompt (inject history when present)
@@ -282,7 +286,7 @@ async def ask_question_stream(
                     chunks_used=len(chunks),
                     search_mode=search_mode,
                 )
-                await _persist_request(request, response, session_id, has_session, cache_client, full_response)
+                asyncio.create_task(_persist_request(request, response, session_id, has_session, cache_client))
 
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
