@@ -6,21 +6,24 @@
 flowchart TD
     Client([Client])
     Client -->|query| Router[Router]
-
     Router --> Q{Session?}
 
-    Q -->|yes| Hist[(History)]
-    Q -->|no|  Cache[(Cache)]
+    subgraph Redis
+        Hist[History]
+        Cache[Cache]
+        Save[Save Turn]
+    end
+
+    Q -->|yes| Hist
+    Q -->|no|  Cache
 
     Cache -->|hit|  Client
-    Cache -->|miss| Search
-
-    Hist --> Search[OpenSearch]
+    Cache -->|miss| Search[OpenSearch]
+    Hist --> Search
 
     Search --> Prompt[Prompt Builder]
     Prompt --> LLM[Ollama]
-
-    LLM --> Save[(Save Turn)]
+    LLM --> Save
     Save --> Client
 ```
 
