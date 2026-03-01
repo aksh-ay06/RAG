@@ -1,5 +1,4 @@
 import os
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -108,14 +107,14 @@ class OpenSearchSettings(BaseConfigSettings):
 
 class Settings(BaseConfigSettings):
     app_version: str = "0.1.0"
-    debug: bool = False
+    debug: bool = True
     environment: Literal["development", "staging", "production"] = "development"
     service_name: str = "rag-api"
 
     postgres_database_url: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
     postgres_echo_sql: bool = False
     postgres_pool_size: int = 20
-    postgres_max_overflow: int = 10
+    postgres_max_overflow: int = 0
 
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:1b"
@@ -137,6 +136,5 @@ class Settings(BaseConfigSettings):
         return v
 
 
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()

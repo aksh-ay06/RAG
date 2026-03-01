@@ -88,16 +88,7 @@ class TextChunker:
 
         # Fallback to traditional word-based chunking
         logger.info(f"Using traditional word-based chunking for {arxiv_id}")
-        chunks = self.chunk_text(full_text, arxiv_id, paper_id)
-
-        if not chunks and (title or abstract):
-            logger.info(f"No full text for {arxiv_id}, falling back to title+abstract chunk")
-            parts = [title] if title else []
-            if abstract:
-                parts.append(f"Abstract: {abstract}")
-            chunks = self.chunk_text("\n\n".join(parts), arxiv_id, paper_id)
-
-        return chunks
+        return self.chunk_text(full_text, arxiv_id, paper_id)
 
     def chunk_text(self, text: str, arxiv_id: str, paper_id: str) -> List[TextChunk]:
         """Chunk text into overlapping segments.
@@ -120,7 +111,7 @@ class TextChunker:
             if words:
                 return [
                     TextChunk(
-                        text=self._reconstruct_text(words),
+                        text=self._reconstruct_text(words, text),
                         metadata=ChunkMetadata(
                             chunk_index=0,
                             start_char=0,
@@ -411,13 +402,13 @@ class TextChunker:
             combined_content.append(f"Section: {section_title}\n\n{content}")
             total_words += word_count
 
-        combined_text = header + "\n\n".join(combined_content)
+        combined_text = f"{header}{'\\n\\n'.join(combined_content)}"
 
         # If still too small, combine with previous chunk if possible
         if total_words + len(header.split()) < 200 and existing_chunks:
             # Try to merge with previous chunk
             prev_chunk = existing_chunks[-1]
-            merged_text = prev_chunk.text + "\n\n" + "\n\n".join(combined_content)
+            merged_text = f"{prev_chunk.text}\\n\\n{'\\n\\n'.join(combined_content)}"
 
             # Update the previous chunk
             existing_chunks[-1] = TextChunk(

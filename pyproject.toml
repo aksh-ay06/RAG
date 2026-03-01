@@ -17,6 +17,8 @@ dependencies = [
     "docling>=2.43.0",
     "python-dateutil>=2.9.0.post0",
     "sentence-transformers>=5.1.0",
+    "gradio>=4.0.0",
+    "mcp>=1.13.1",
 ]
 readme = "README.md"
 
@@ -56,3 +58,5 @@ env_files = ".env.test"
 [tool.mypy]
 explicit_package_bases = true
 ignore_errors = true
+
+

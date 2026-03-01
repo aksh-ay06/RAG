@@ -1,3 +1,3 @@
-from . import hybrid_search, papers, ping
+from . import ask, hybrid_search, ping
 
-__all__ = ["hybrid_search", "papers", "ping"]
+__all__ = ["hybrid_search", "ask", "ping"]

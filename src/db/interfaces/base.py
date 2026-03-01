@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional,ContextManager
 
 from sqlalchemy.orm import Session
 
-from src import db
 
 class BaseDatabase(ABC):
     @abstractmethod

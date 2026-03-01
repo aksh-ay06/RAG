@@ -34,12 +34,14 @@ class MetadataFetcher:
 
         :param arxiv_client: Client for arXiv API operations
         :param pdf_parser: Service for parsing PDF documents
+        :param opensearch_client: Optional OpenSearch client for indexing
         :param pdf_cache_dir: Directory for caching downloaded PDFs
         :param max_concurrent_downloads: Maximum concurrent PDF downloads
         :param max_concurrent_parsing: Maximum concurrent PDF parsing operations
         :param settings: Application settings instance
         :type arxiv_client: ArxivClient
         :type pdf_parser: PDFParserService
+        :type opensearch_client: Optional[OpenSearchClient]
         :type pdf_cache_dir: Optional[Path]
         :type max_concurrent_downloads: int
         :type max_concurrent_parsing: int
