@@ -1,0 +1,104 @@
+POSSIBLE PROJECT EXTENSIONS
+============================
+
+
+RETRIEVAL QUALITY
+-----------------
+
+Re-ranking
+  After hybrid search returns top-K chunks, run a cross-encoder (e.g.
+  cross-encoder/ms-marco-MiniLM) to re-score them before feeding to the LLM.
+  Big quality improvement, small latency cost.
+
+Multi-query expansion
+  Use the LLM to rewrite the user's question into 3-5 variants, run searches
+  for each, then merge and deduplicate results. Catches synonyms and phrasing
+  differences that a single query misses.
+
+HyDE (Hypothetical Document Embeddings)
+  Ask the LLM to generate a hypothetical answer first, embed that, then use it
+  as the query vector. Closes the gap between question and passage embedding
+  spaces.
+
+Parent-chunk retrieval
+  Index small chunks for precise matching but retrieve the surrounding full
+  section for context. Currently chunks are returned as-is; storing a
+  parent_id on each chunk makes this easy to add.
+
+
+ANSWER QUALITY
+--------------
+
+Faithfulness checking
+  After generation, verify citations actually appear in the retrieved chunks.
+  The sources field is already in the response schema -- adding a grounding
+  pass prevents hallucinated citations.
+
+RAGAS evaluation pipeline
+  Automated evaluation of retrieval precision, answer faithfulness, and answer
+  relevance. Plugs naturally into the Langfuse traces already in place.
+
+Self-RAG / CRAG
+  Let the model grade its own retrieval and decide whether to retrieve again or
+  abstain. The existing tracing spans make it easy to instrument this loop.
+
+
+CONVERSATION & UX
+-----------------
+
+Multi-turn dialogue
+  The API is currently stateless. Adding a session_id to AskRequest and storing
+  conversation history (in Redis or PostgreSQL, both already in the stack)
+  enables follow-up questions.
+
+Paper recommendations
+  Given a query or a paper the user found useful, use the vector index to
+  surface semantically similar papers. The OpenSearch knn query is already there.
+
+Saved searches / alerts
+  Airflow is already wired up; adding a DAG that runs saved queries against
+  newly ingested papers and notifies on hits is a natural fit.
+
+
+DATA PIPELINE
+-------------
+
+Citation graph traversal
+  When ingesting a paper, follow its references and ingest those too. arXiv IDs
+  are already parsed; the ArxivClient just needs recursive fetching with depth
+  limiting.
+
+Multi-modal ingestion
+  Docling (already used for PDF parsing) supports table and figure extraction.
+  Storing figure captions and table content as separate chunks would make
+  retrieval much richer.
+
+Incremental re-embedding
+  When the embedding model changes, only re-embed chunks that have not been
+  embedded with the new model version. Adding a model_version field to indexed
+  documents makes this trackable.
+
+
+OBSERVABILITY & RELIABILITY
+----------------------------
+
+Retrieval A/B testing
+  Use Langfuse experiments to compare BM25-only vs hybrid results on the same
+  queries. The tracing infrastructure is already in place.
+
+Circuit breaker for Ollama
+  If Ollama is slow or down, fall back to a smaller/faster model or return a
+  "service degraded" response rather than timing out. Fits naturally into the
+  factory pattern.
+
+Rate limiting
+  The API has no request rate limiting. slowapi integrates with FastAPI in a
+  few lines and would prevent a single user from hammering Ollama.
+
+
+HIGHEST ROI
+-----------
+
+1. Re-ranking          -- biggest retrieval quality jump
+2. Multi-turn dialogue -- makes it usable as a research assistant
+3. Faithfulness check  -- prevents hallucinated citations
