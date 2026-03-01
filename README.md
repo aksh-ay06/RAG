@@ -20,6 +20,26 @@ This project does that:
 
 ---
 
+## By the Numbers
+
+| Metric | Value |
+|---|---|
+| Query embedding latency | ~370ms (Jina API round-trip) |
+| Hybrid search latency | ~72ms (BM25 + k-NN via OpenSearch RRF) |
+| Prompt construction | <1ms |
+| LLM generation (Llama 1B, CPU-only) | ~51s |
+| Cached response latency | ~390ms (145x faster than full LLM call) |
+| Cache TTL | 6 hours exact-match, 24 hours session history |
+| Chunk size | 600 words with 100-word overlap |
+| Embedding dimensions | 1024 (jina-embeddings-v3) |
+| Docker services | 10 (single `make start`) |
+| Python source files | 65 files, ~5,600 lines |
+| Test suite | 51 unit tests |
+
+Latency numbers are from Langfuse traces on a CPU-only machine. The LLM is the bottleneck by a large margin -- retrieval + embedding takes under 500ms combined. Switching to a GPU or a hosted model brings generation under 2s.
+
+---
+
 ## Architecture
 
 ### System Overview
@@ -240,8 +260,8 @@ JINA_API_KEY=jina_...
 
 # Optional: Langfuse tracing (disable if you do not want it)
 LANGFUSE__ENABLED=false        # set true and fill keys to enable
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE__PUBLIC_KEY=pk-lf-...
+LANGFUSE__SECRET_KEY=sk-lf-...
 ```
 
 Everything else defaults to localhost ports that match the Docker Compose config.
