@@ -4,23 +4,23 @@
 
 ```mermaid
 flowchart TD
-    Client(["Client"])
-    Client -->|query| Router["Router"]
+    Client([Client])
+    Client -->|query| Router[Router]
 
-    Router --> Q{{"Session?"}}
+    Router --> Q{Session?}
 
-    Q -->|yes| Hist[("History")]
-    Q -->|no|  Cache[("Cache")]
+    Q -->|yes| Hist[(History)]
+    Q -->|no|  Cache[(Cache)]
 
     Cache -->|hit|  Client
     Cache -->|miss| Search
 
-    Hist --> Search["OpenSearch"]
+    Hist --> Search[OpenSearch]
 
-    Search --> Prompt["Prompt Builder"]
-    Prompt --> LLM["Ollama"]
+    Search --> Prompt[Prompt Builder]
+    Prompt --> LLM[Ollama]
 
-    LLM --> Save[("Save Turn")]
+    LLM --> Save[(Save Turn)]
     Save --> Client
 ```
 
