@@ -34,7 +34,10 @@ async def _stream_chat_turn(
         payload["session_id"] = session_id
 
     # Append user turn; assistant slot starts empty
-    history = history + [[message, ""]]
+    history = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": ""},
+    ]
     current_answer = ""
     sources: list[str] = []
     chunks_used = 0
@@ -50,7 +53,7 @@ async def _stream_chat_turn(
                 headers={"Accept": "text/plain"},
             ) as response:
                 if response.status_code != 200:
-                    history[-1][1] = f"Error: API returned status {response.status_code}"
+                    history[-1]["content"] = f"Error: API returned status {response.status_code}"
                     yield history, new_session_id
                     return
 
@@ -63,7 +66,7 @@ async def _stream_chat_turn(
                         continue
 
                     if "error" in data:
-                        history[-1][1] = f"Error: {data['error']}"
+                        history[-1]["content"] = f"Error: {data['error']}"
                         yield history, new_session_id
                         return
 
@@ -78,7 +81,7 @@ async def _stream_chat_turn(
                     # Streaming text chunk
                     if "chunk" in data:
                         current_answer += data["chunk"]
-                        history[-1][1] = current_answer
+                        history[-1]["content"] = current_answer
                         yield history, new_session_id
 
                     # Done event
@@ -103,17 +106,17 @@ async def _stream_chat_turn(
                                 if len(sources) > 3:
                                     formatted += f"\n… and {len(sources) - 3} more"
 
-                        history[-1][1] = formatted
+                        history[-1]["content"] = formatted
                         yield history, new_session_id
                         break
 
     except httpx.RequestError as e:
-        history[-1][1] = (
+        history[-1]["content"] = (
             f"Connection error: {e}\n\nMake sure the API server is running at `{API_BASE_URL}`"
         )
         yield history, new_session_id
     except Exception as e:
-        history[-1][1] = f"Unexpected error: {e}"
+        history[-1]["content"] = f"Unexpected error: {e}"
         yield history, new_session_id
 
 
