@@ -2,7 +2,7 @@
 
 import json
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,10 +11,28 @@ from src.services.cache.client import CacheClient
 
 
 @pytest.fixture
-def redis_mock():
+def pipe_mock():
+    """Async context manager mock for redis.pipeline().
+
+    Redis pipeline commands (multi, set) are sync; watch/get/execute are awaited.
+    """
+    pipe = MagicMock()
+    pipe.watch = AsyncMock()
+    pipe.get = AsyncMock(return_value=None)
+    pipe.multi = MagicMock()
+    pipe.set = MagicMock()
+    pipe.execute = AsyncMock()
+    pipe.__aenter__ = AsyncMock(return_value=pipe)
+    pipe.__aexit__ = AsyncMock(return_value=False)
+    return pipe
+
+
+@pytest.fixture
+def redis_mock(pipe_mock):
     mock = AsyncMock()
     mock.get = AsyncMock(return_value=None)
     mock.set = AsyncMock(return_value=True)
+    mock.pipeline = MagicMock(return_value=pipe_mock)
     return mock
 
 
@@ -90,14 +108,14 @@ async def test_get_session_history_redis_error_returns_empty(cache_client, redis
 # ---------------------------------------------------------------------------
 
 
-async def test_append_creates_history_for_new_session(cache_client, redis_mock):
+async def test_append_creates_history_for_new_session(cache_client, pipe_mock):
     """Creates a two-message list when no prior history exists."""
-    redis_mock.get.return_value = None
+    pipe_mock.get.return_value = None
 
     await cache_client.append_to_session_history("sess-new", "Hello", "Hi there!")
 
-    redis_mock.set.assert_awaited_once()
-    key, payload = redis_mock.set.call_args.args
+    pipe_mock.set.assert_called_once()
+    key, payload = pipe_mock.set.call_args.args
     assert key == "session:sess-new:history"
     stored = json.loads(payload)
     assert stored == [
@@ -106,37 +124,37 @@ async def test_append_creates_history_for_new_session(cache_client, redis_mock):
     ]
 
 
-async def test_append_accumulates_turns(cache_client, redis_mock):
+async def test_append_accumulates_turns(cache_client, pipe_mock):
     """Appends a new turn to an existing history."""
     existing = [
         {"role": "user", "content": "First question"},
         {"role": "assistant", "content": "First answer"},
     ]
-    redis_mock.get.return_value = json.dumps(existing)
+    pipe_mock.get.return_value = json.dumps(existing)
 
     await cache_client.append_to_session_history("sess-abc", "Second question", "Second answer")
 
-    _, payload = redis_mock.set.call_args.args
+    _, payload = pipe_mock.set.call_args.args
     stored = json.loads(payload)
     assert len(stored) == 4
     assert stored[2] == {"role": "user", "content": "Second question"}
     assert stored[3] == {"role": "assistant", "content": "Second answer"}
 
 
-async def test_append_sets_correct_ttl(cache_client, redis_mock, settings):
+async def test_append_sets_correct_ttl(cache_client, pipe_mock, settings):
     """Sets the Redis key with the session_ttl_hours TTL."""
-    redis_mock.get.return_value = None
+    pipe_mock.get.return_value = None
     expected_ttl = int(timedelta(hours=settings.session_ttl_hours).total_seconds())
 
     await cache_client.append_to_session_history("sess-ttl", "q", "a")
 
-    kwargs = redis_mock.set.call_args.kwargs
+    kwargs = pipe_mock.set.call_args.kwargs
     assert kwargs["ex"] == expected_ttl
 
 
-async def test_append_redis_error_does_not_raise(cache_client, redis_mock):
+async def test_append_redis_error_does_not_raise(cache_client, pipe_mock):
     """Swallows Redis errors rather than propagating them."""
-    redis_mock.get.side_effect = ConnectionError("Redis unavailable")
+    pipe_mock.get.side_effect = ConnectionError("Redis unavailable")
 
     # Should not raise
     await cache_client.append_to_session_history("sess-err", "q", "a")

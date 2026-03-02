@@ -202,7 +202,7 @@ async def ask_question(
             )
 
             rag_tracer.end_request(trace, answer, time.time() - start_time)
-            asyncio.create_task(_persist_request(request, response, session_id, has_session, cache_client))
+            await _persist_request(request, response, session_id, has_session, cache_client)
             return response
 
         except Exception as e:
