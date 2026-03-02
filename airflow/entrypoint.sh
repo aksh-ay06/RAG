@@ -1,16 +1,6 @@
 #!/bin/bash
 set -e
 
-# Clean up any existing PID files and processes
-echo "Cleaning up any existing Airflow processes..."
-pkill -f "airflow webserver" || true
-pkill -f "airflow scheduler" || true
-rm -f /opt/airflow/airflow-webserver.pid
-rm -f /opt/airflow/airflow-scheduler.pid
-
-# Wait a moment for processes to fully terminate
-sleep 2
-
 # Initialize Airflow database
 echo "Initializing Airflow database..."
 airflow db init
@@ -25,7 +15,12 @@ airflow users create \
     --email admin@example.com \
     --password admin || echo "Admin user already exists"
 
-# Start webserver and scheduler
-echo "Starting Airflow webserver and scheduler..."
-airflow webserver --port 8080 --daemon &
-airflow scheduler
+# Start webserver in background without --daemon so logs go to stdout
+# and there are no PID file conflicts on container restart
+echo "Starting Airflow webserver..."
+airflow webserver --port 8080 &
+
+# Start scheduler as the main process (exec replaces the shell so Docker
+# signals are delivered directly to the scheduler)
+echo "Starting Airflow scheduler..."
+exec airflow scheduler
